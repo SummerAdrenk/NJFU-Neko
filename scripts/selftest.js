@@ -223,6 +223,11 @@ store.update(req.id, 'done', '好了');
 check('需求 记录', store.get(req.id)?.status === 'done' && store.open().length === 0);
 fs.rmSync(tmp, { force: true });
 
+const { Duels } = await import('../src/bot/duel.js');
+const duels = new Duels({ cfg: {} });
+duels.last = { player: 'Steve', endedAt: Date.now() };
+check('决斗 刚结束时的余招不扣好感', duels.isDueling('Steve', 5000) && !duels.isDueling('Steve') && !duels.isDueling('Alex', 5000));
+
 // 7. 面板模组通知、OpenAI 兼容接口、打码
 const chatMod = await import('../src/bot/chat.js');
 check('面板通知 菜单按钮', JSON.stringify(chatMod.parseUiNotice('[NJFU-UI] do Steve pet')) === JSON.stringify({ action: 'do', player: 'Steve', what: 'pet' }));

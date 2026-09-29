@@ -40,8 +40,10 @@ export class Duels {
     return s;
   }
 
-  isDueling(player) {
-    return this.active?.player === player;
+  // 正在和他决斗；graceMs > 0 时刚结束的也算（收尾那一下余招不算打猫娘）
+  isDueling(player, graceMs = 0) {
+    if (this.active?.player === player) return true;
+    return graceMs > 0 && this.last?.player === player && Date.now() - this.last.endedAt < graceMs;
   }
 
   statsText(player) {
@@ -71,6 +73,7 @@ export class Duels {
       try {
         return await this.fightLoop(task, username, level, cfg);
       } finally {
+        this.last = { player: username, endedAt: Date.now() };
         this.active = null;
         if (bot.usingHeldItem) bot.deactivateItem();
         bot.clearControlStates();

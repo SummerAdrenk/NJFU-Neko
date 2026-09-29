@@ -68,7 +68,7 @@ export class Social {
     // 猫娘被玩家打
     if (entity === bot.entity) {
       if (source?.type === 'player' && source.username && source.username !== bot.username) {
-        if (agent.duels?.isDueling(source.username)) return; // 决斗中挨打是正常的
+        if (agent.duels?.isDueling(source.username, 5000)) return; // 决斗中、刚结束 5 秒内挨打是正常的
         const now = Date.now();
         if (now - (this.lastHurtBy.get(source.username) ?? 0) < 5000) return;
         this.lastHurtBy.set(source.username, now);
