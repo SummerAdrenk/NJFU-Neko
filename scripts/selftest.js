@@ -268,6 +268,9 @@ check('扔垃圾 不扔礼物', !junk.junkPlan(junkBot, { gifts: new Set(['leath
 
 const createBotMod = await import('../src/bot/createBot.js');
 check('鞘翅 展开的动作名（新版本 start_fall_flying，不能用 mineflayer 的旧名字）', createBotMod.fallFlyingAction(registry) === 'start_fall_flying');
+const enchItem = { get enchants() { return { enchantments: [{ id: registry.enchantmentsByName.sharpness.id, level: 5 }] }; } };
+createBotMod.normalizeEnchants({ registry }, enchItem);
+check('附魔 整理成 mineflayer 能用的列表（带附魔的工具才能挖东西）', Array.isArray(enchItem.enchants) && enchItem.enchants[0].name === 'sharpness' && enchItem.enchants[0].lvl === 5);
 
 // 7. 面板模组通知、OpenAI 兼容接口、打码
 const chatMod = await import('../src/bot/chat.js');

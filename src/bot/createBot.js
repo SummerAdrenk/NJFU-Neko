@@ -28,11 +28,30 @@ export function createBot(cfg, target) {
   bot.loadPlugin(pvpPkg.plugin);
   if (cfg.behavior.auto_armor) bot.loadPlugin(armorManager);
   bot.nekoScaffold = cfg.behavior.scaffold !== false;
-  // mineflayer 的物理模块在连上服务器后才装载，会把 elytraFly 换回它那个发错动作名的版本：每次进入世界再换一次
+  // mineflayer 的插件在连上服务器后才装载：elytraFly、dig 的修正要等进入世界后再装上（每次进入世界都检查一遍）
   bot.on('spawn', () => {
     bot.elytraFly = () => startGliding(bot);
+    if (!bot.dig.nekoPatched) {
+      const dig = bot.dig.bind(bot);
+      bot.dig = async (...args) => {
+        normalizeEnchants(bot, bot.heldItem);
+        normalizeEnchants(bot, bot.inventory.slots[bot.getEquipmentDestSlot('head')]);
+        return dig(...args);
+      };
+      bot.dig.nekoPatched = true;
+    }
   });
   return bot;
+}
+
+// 新版物品（1.20.5+ 的组件）的 enchants 读出来是 { enchantments: [{ id, level }] }，mineflayer 算挖掘时间时当成列表用
+// （enchantments.concat），带附魔的工具一挖东西就报错。挖之前把它整理成 [{ name, lvl }]。
+export function normalizeEnchants(bot, item) {
+  if (!item) return;
+  const raw = item.enchants;
+  if (Array.isArray(raw)) return;
+  const list = (raw?.enchantments ?? []).map((e) => ({ name: bot.registry?.enchantments?.[e.id]?.name ?? String(e.id), lvl: e.level }));
+  Object.defineProperty(item, 'enchants', { value: list, configurable: true, writable: true });
 }
 
 // “展开鞘翅”的动作：新版本（1.21.2+）叫 start_fall_flying，mineflayer 还在发旧名字 start_elytra_flying（或旧编号 8），
