@@ -289,12 +289,21 @@ export class Agent extends EventEmitter {
     installInteractions(this, bot);
 
     let spawned = false;
+    // 登录超时：连上了却一直进不了世界（握手卡住）就断开重连，不然会一直卡着
+    const loginTimer = setTimeout(() => {
+      if (spawned || this.bot !== bot) return;
+      log.warn('连上服务器 60 秒还没进入世界（握手卡住了），断开重连');
+      this.events.push('connection', { state: 'error', detail: '登录超时，重连' });
+      bot.end('登录超时');
+    }, 60_000);
+    bot.once('end', () => clearTimeout(loginTimer));
     bot.on('spawn', () => {
       if (spawned) {
         this.events.push('bot', { what: 'respawn', position: fmtPos(bot.entity.position) });
         return;
       }
       spawned = true;
+      clearTimeout(loginTimer);
       this.onSpawn(bot);
     });
     bot.on('kicked', (reason) => {
