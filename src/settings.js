@@ -16,7 +16,7 @@ export const SETTINGS = [
   { key: '帮忙打怪', path: 'behavior.assist_owner', type: 'bool', desc: '主人打怪时过去帮忙' },
   { key: '保护主人', path: 'behavior.protect_owner', type: 'bool', desc: '主人被怪打时去保护' },
   { key: '问睡觉', path: 'behavior.ask_to_sleep', type: 'bool', desc: '有人上床时问要不要一起睡' },
-  { key: '垫方块', path: 'behavior.scaffold', type: 'bool', desc: '走路时搭桥、垫高' },
+  { key: '垫方块', path: 'behavior.scaffold', type: 'bool', desc: '被困住、走不过去时垫方块脱困（平时走路不放方块）' },
   { key: '防摔', path: 'behavior.fall_safety', type: 'bool', desc: '落地水、鞘翅、落地船' },
   { key: '传送距离', path: 'behavior.teleport_distance', type: 'int', min: 0, max: 256, desc: '离主人多远就传送过去（0 关闭）' },
   { key: '撤退血量', path: 'behavior.retreat_health', type: 'int', min: 0, max: 19, desc: '血量到这个值就撤退（默认 1 滴血，0 = 不撤；普通模式多 2）' },

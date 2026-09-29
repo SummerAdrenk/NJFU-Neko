@@ -38,12 +38,13 @@ const PROTECTED = /(_planks|_stairs|_slab|_wall|_fence|_fence_gate|_door|_trapdo
 // 可以随手垫的便宜方块（搭路、往上垫高时用）
 const SCAFFOLD = /^(dirt|coarse_dirt|cobblestone|cobbled_deepslate|netherrack|andesite|diorite|granite|tuff|blackstone|end_stone|stone|deepslate|mud|basalt|calcite)$/;
 
-export function makeMovements(bot, { dig = false, scaffold = bot.nekoScaffold !== false } = {}) {
+// scaffold：寻路时能不能垫方块（搭桥过沟、原地垫高）。默认不垫——平时走路不放方块，只有建造和被困住走不出去时才打开（见 gotoGoal）。
+export function makeMovements(bot, { dig = false, scaffold = false } = {}) {
   const moves = new Movements(bot);
   moves.canDig = dig;
   moves.allowParkour = true;
   moves.allowSprinting = true;
-  // 垫方块：身上有泥土、圆石这类便宜方块时，寻路可以搭桥过沟、原地垫高爬上去
+  // 垫方块：身上有泥土、圆石这类便宜方块时才行
   const blocks = scaffold ? bot.registry.itemsArray.filter((i) => SCAFFOLD.test(i.name)).map((i) => i.id) : [];
   moves.scafoldingBlocks = blocks;
   moves.allow1by1towers = blocks.length > 0;

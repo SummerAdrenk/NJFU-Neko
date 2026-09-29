@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { goals, makeMovements } from './createBot.js';
 import {
   countItem, describeError, equipBestWeapon, findItem, findNearestBlock, findPlayer, fleeFrom, gotoGoal, gotoNear,
-  nearestCreeper, nearestThreat, normalizeName, placeNearby, protectedReason, resolveBlockIds, resolveItem, summarizeItems, unknownName, Vec3,
+  nearestCreeper, nearestThreat, normalizeName, placeNearby, protectedReason, resolveBlockIds, resolveItem, summarizeItems, takeBack, unknownName, Vec3,
 } from './helpers.js';
 import { canEngage, creeperPlan, fight, pickTarget } from './combat.js';
 import { inventoryCounts, materialsFor, prepareMaterials, returnLeftovers } from './supply.js';
@@ -283,12 +283,18 @@ export async function craftCore(agent, it, want, signal) {
     const recipes = bot.recipesFor(it.id, null, 1, tableAvailable ? true : null);
     if (!recipes.length) throw new Error(missingText(bot, it, tableAvailable));
     const recipe = recipes.find((r) => !r.requiresTable) ?? recipes[0];
-    if (recipe.requiresTable && !table) table = await placeNearby(agent, 'crafting_table', task.signal);
+    // 附近没有工作台：临时放一个，做完收回来
+    let placedTable = false;
+    if (recipe.requiresTable && !table) {
+      table = await placeNearby(agent, 'crafting_table', task.signal);
+      placedTable = true;
+    }
     const per = recipe.result?.count ?? 1;
     const times = Math.min(Math.ceil(want / per), maxCraftTimes(bot, recipe));
     if (times < 1) throw new Error(missingText(bot, it, true));
     if (recipe.requiresTable && distTo(bot, table.position) > 4) await gotoNear(agent, table.position, 2, { signal: task.signal });
     await abortable(bot.craft(recipe, times, recipe.requiresTable ? table : null), task.signal);
+    if (placedTable) await takeBack(agent, table.position, task.signal);
     const made = times * per;
     return `合成了 ${made} 个 ${it.name}${made < want ? `（想要 ${want} 个，材料只够这些）` : ''}，背包里现在有 ${countItem(bot, it.name)} 个`;
   }
@@ -321,9 +327,13 @@ export async function smeltCore(agent, input, n, signal) {
   {
     const kinds = ['furnace', ...(isFood ? ['smoker'] : []), ...(isOre ? ['blast_furnace'] : [])];
     let block = findNearestBlock(bot, kinds, 32);
+    // 附近没有熔炉：临时放一个，烧完（剩下的燃料取出来）收回来
+    let placedFurnace = false;
+    let finished = false;
     if (!block) {
       if (!findItem(bot, 'furnace')) throw new Error('附近 32 格没有熔炉，背包里也没有（8 个圆石可以合成 furnace）');
       block = await placeNearby(agent, 'furnace', task.signal);
+      placedFurnace = true;
     }
     if (distTo(bot, block.position) > 4) await gotoNear(agent, block.position, 2, { signal: task.signal });
     const furnace = await withTimeout(bot.openFurnace(bot.blockAt(block.position)), 10_000, '熔炉打不开');
@@ -356,6 +366,8 @@ export async function smeltCore(agent, input, n, signal) {
         if (!furnace.inputItem()) {
           await sleep(500, task.signal);
           await takeOut();
+          finished = true;
+          if (placedFurnace && furnace.fuelItem()) await furnace.takeFuel().catch(() => {});
           break;
         }
         if (Date.now() - lastProgress > 25_000) {
@@ -365,6 +377,7 @@ export async function smeltCore(agent, input, n, signal) {
     } finally {
       furnace.close();
     }
+    if (placedFurnace && finished) await takeBack(agent, block.position, task.signal);
     return got ? `烧好并取出了 ${got} 个 ${outName}` : '没有烧出东西';
   }
 }

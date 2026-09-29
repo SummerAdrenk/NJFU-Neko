@@ -152,11 +152,11 @@ async function placeOriented(agent, pos, spec, item, signal) {
   }
   if (!reference) throw new Error('旁边没有能依附的方块');
   if (bot.entity.position.distanceTo(pos.offset(0.5, 0.5, 0.5)) > 4) {
-    await gotoGoal(agent, new goals.GoalNear(pos.x, pos.y, pos.z, 3), { signal, timeoutMs: 60_000 });
+    await gotoGoal(agent, new goals.GoalNear(pos.x, pos.y, pos.z, 3), { signal, timeoutMs: 60_000, scaffold: true });
   }
   const feet = bot.entity.position.floored();
   if (feet.equals(pos) || feet.offset(0, 1, 0).equals(pos)) {
-    await gotoGoal(agent, new goals.GoalInvert(new goals.GoalNear(pos.x, pos.y, pos.z, 1.5)), { signal, timeoutMs: 15_000 });
+    await gotoGoal(agent, new goals.GoalInvert(new goals.GoalNear(pos.x, pos.y, pos.z, 1.5)), { signal, timeoutMs: 15_000, scaffold: true });
   }
   await bot.equip(item, 'hand');
   const look = lookDirFor(spec.name, facing);

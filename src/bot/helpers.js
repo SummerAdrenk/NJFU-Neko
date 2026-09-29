@@ -223,16 +223,32 @@ export function describeError(err) {
   return err.message || String(err);
 }
 
-export async function gotoGoal(agent, goal, { dig, signal, timeoutMs = 180_000 } = {}) {
+// 走到 goal。平时不垫方块（不在路上留方块）；scaffold：建造时允许垫。
+// 找不到路（被困在坑里、围墙里、柱子上）时，如果允许（#设置 垫方块）就垫着方块再试一次，把自己弄出来。
+export async function gotoGoal(agent, goal, { dig, signal, timeoutMs = 180_000, scaffold = false } = {}) {
   const bot = agent.bot;
-  bot.pathfinder.setMovements(makeMovements(bot, { dig: dig ?? agent.cfg.behavior.dig_while_pathing }));
+  const go = (withBlocks) => {
+    bot.pathfinder.setMovements(makeMovements(bot, { dig: dig ?? agent.cfg.behavior.dig_while_pathing, scaffold: withBlocks }));
+    return abortable(withTimeout(bot.pathfinder.goto(goal), timeoutMs, '走了太久还没到'), signal);
+  };
   try {
-    await abortable(withTimeout(bot.pathfinder.goto(goal), timeoutMs, '走了太久还没到'), signal);
+    await go(scaffold);
   } catch (err) {
     bot.pathfinder.setGoal(null);
     if (signal?.aborted) throw abortError(signal);
-    const wrapped = new Error(describeError(err));
-    wrapped.name = err.name;
+    let last = err;
+    if (!scaffold && /^(NoPath|Timeout)$/.test(err.name) && bot.nekoScaffold !== false) {
+      try {
+        await go(true);
+        return;
+      } catch (err2) {
+        bot.pathfinder.setGoal(null);
+        if (signal?.aborted) throw abortError(signal);
+        last = err2;
+      }
+    }
+    const wrapped = new Error(describeError(last));
+    wrapped.name = last.name;
     throw wrapped;
   }
 }
@@ -274,6 +290,21 @@ export async function placeAt(agent, target, item, signal) {
   await bot.equip(item, 'hand');
   await bot.placeBlock(reference, face);
   return bot.blockAt(pos);
+}
+
+// 自己临时放下的方块（工作台、熔炉）用完收回来：挖掉并捡起。要特定工具才会掉的（熔炉要镐）没有工具就留着。
+export async function takeBack(agent, pos, signal) {
+  const bot = agent.bot;
+  const block = bot.blockAt(pos);
+  if (!block || isEmpty(block)) return false;
+  if (block.harvestTools && !bot.pathfinder?.bestHarvestTool?.(block)) return false;
+  try {
+    await abortable(bot.collectBlock.collect(block), signal);
+    return true;
+  } catch (err) {
+    if (signal?.aborted) throw err;
+    return false;
+  }
 }
 
 // 在猫娘身边找块空地放下物品（工作台、熔炉等）。
