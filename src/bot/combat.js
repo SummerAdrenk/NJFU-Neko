@@ -1350,7 +1350,8 @@ export class Fighter {
           log.debug(`${target.name} 走不过去，先不管它`);
           return false;
         }
-        if (!(t.ranged && bot.health < 14 && this.blockIfThreatened())) this.lower();
+        // 追远程怪（骷髅、掠夺者…）：它拉弓瞄着自己、或者有箭飞过来时举盾挡着走（举盾走得慢，所以只在要挨射时举）
+        if (!(t.ranged && this.blockIfThreatened())) this.lower();
         this.follow(target, Math.max(1, (trapped ? 2.5 : t.spacing) - 0.5));
         await this.wait(100);
         continue;
