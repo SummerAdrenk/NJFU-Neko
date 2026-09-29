@@ -98,6 +98,12 @@ export function installSurvival(agent, bot) {
     const cur = agent.tasks.current;
     if (cur && cur.name !== 'companion') return;
     if (source?.type === 'player') return; // 被玩家打由好感度系统处理，不还手
+    // 记下谁打了我：被激怒的中立生物（末影人、僵尸猪灵……）要还手
+    if (source?.id != null && source !== bot.entity) {
+      agent.attackedBy ??= new Map();
+      agent.attackedBy.set(source.id, Date.now());
+      if (agent.attackedBy.size > 100) agent.attackedBy.clear();
+    }
     const attacker = source && source !== bot.entity ? source : nearestThreat(agent, bot.entity.position, 6, canEngage);
     if (!attacker?.position) return;
     // 被怪群围住：不一只只迎战，先撤（往主人那边或者背对怪群跑）

@@ -110,6 +110,9 @@ const healthIndex = registry.entitiesByName.zombie.metadataKeys.indexOf('health'
 const deadZombie = ent('zombie', { id: 11, metadata: Object.assign([], { [healthIndex]: 0 }) });
 const liveZombie = ent('zombie', { id: 12, metadata: Object.assign([], { [healthIndex]: 20 }) });
 check('死怪 不算威胁', !helpers.isThreat(agent, deadZombie) && helpers.isThreat(agent, liveZombie));
+const angryEnderman = ent('enderman', { id: 13 });
+check('中立 平时不打末影人', !combat.canEngage({ ...agent, attackedBy: new Map() }, angryEnderman));
+check('中立 被打了还手', combat.canEngage({ ...agent, attackedBy: new Map([[13, Date.now()]]) }, angryEnderman));
 check('死怪 不去打', !combat.canEngage({ ...agent, bot: { ...fakeBot, health: 20, inventory: { items: () => [] } } }, deadZombie));
 
 // 5. 面板模组相关：菜单按钮不再用 /trigger，命令会走 /njfu quiet

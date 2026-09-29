@@ -236,8 +236,19 @@ export function creeperPlan(agent) {
   return 'flee';
 }
 
-// 自动防御时可以主动去打的：敌对、没被保护，而且有对应的打法。
+// 中立生物平时不招惹，但已经被激怒、正在打我的时候要还手（末影人会瞬移，躲是躲不掉的）。
+const RETALIATE = new Set(['enderman', 'zombified_piglin', 'piglin', 'wolf', 'bee', 'polar_bear', 'llama', 'trader_llama', 'panda', 'goat']);
+
+export function provoked(agent, e) {
+  if (!e?.name || !RETALIATE.has(e.name) || !isAliveEntity(agent.bot, e) || protectedReason(agent, e)) return false;
+  if (e.name === 'enderman' && meta(agent.bot, e, 'creepy') === true) return true;
+  const t = agent.attackedBy?.get(e.id);
+  return Boolean(t && Date.now() - t < 20_000);
+}
+
+// 自动防御时可以主动去打的：敌对（或者被激怒来打我的中立生物）、没被保护，而且有对应的打法。
 export function canEngage(agent, e) {
+  if (provoked(agent, e)) return true;
   if (!e?.name || !isHostile(e) || !isAliveEntity(agent.bot, e) || protectedReason(agent, e)) return false;
   if (e.name === 'creeper') return creeperPlan(agent) !== 'flee';
   if (e.name === 'ghast') return hasBow(agent.bot);
