@@ -24,6 +24,7 @@ import { abortError, sleep } from '../util.js';
 const log = getLog('决斗');
 const STATS_FILE = path.join(RUNTIME, 'duels.json');
 const LOCK_HP = 1;
+const COUNTDOWN = 10; // 开打前倒数几秒
 const WEAPON_DAMAGE = { netherite_sword: 8, diamond_sword: 7, iron_sword: 6, stone_sword: 5, golden_sword: 4, wooden_sword: 4, netherite_axe: 10, diamond_axe: 9, iron_axe: 9, stone_axe: 9, golden_axe: 7, wooden_axe: 7, mace: 6, trident: 9 };
 const sameArena = (a, b) => Boolean(a && b && a.x === b.x && a.y === b.y && a.z === b.z);
 const MODES = ['survival', 'creative', 'adventure', 'spectator'];
@@ -566,12 +567,18 @@ export class Duels {
       for (const kinds of [['strength'], ['swiftness'], ['fire_resistance']]) await usePotion(agent, kinds).catch(() => null);
       await equipBestWeapon(bot);
     }
-    for (const n of ['3', '2', '1']) {
+    // 倒计时 10 秒：对手屏幕中间大字倒数（最后 3 秒变红），聊天里只报 10、5、3、2、1，免得刷屏
+    const bigText = (text, color) => {
+      if (agent.quietCommands) agent.adminCommand(`title ${username} title ${JSON.stringify({ text, color, bold: true })}`);
+    };
+    if (agent.quietCommands) agent.adminCommand(`title ${username} times 0 25 5`);
+    for (let n = COUNTDOWN; n >= 1; n--) {
+      if (n === COUNTDOWN || n === 5 || n <= 3) say(`${n}…`);
+      bigText(String(n), n <= 3 ? 'red' : 'gold');
       await sleep(1000, task.signal);
-      say(`${n}…`);
     }
-    await sleep(800, task.signal);
     say('开打喵！');
+    bigText('开打！', 'red');
     const minutes = duelMinutes(level, cfg);
     // 打不过随时可以认输：聊天栏里给对手一个按钮（装了面板模组点一下就生效）
     sendPanel(agent, username, [[
