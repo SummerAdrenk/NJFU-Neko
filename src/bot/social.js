@@ -200,6 +200,9 @@ export class Social {
     const owner = agent.chat.isOwner(info.thrower);
     const r = agent.affection.change(info.thrower, agent.affection.giftValue(item.name, item.count), `送了 ${item.name}×${item.count}`, { kind: 'gift', owner });
     agent.events.push('bot', { what: 'gift', by: info.thrower, detail: `${item.name}×${item.count}，好感 ${r.applied >= 0 ? '+' : ''}${r.applied} → ${r.score}` });
+    agent.giftLedger ??= [];
+    agent.giftLedger.push({ player: info.thrower, item: item.name, count: item.count, t: Date.now() });
+    if (agent.giftLedger.length > 200) agent.giftLedger.splice(0, agent.giftLedger.length - 200);
     agent.emit('social', { type: 'gift', player: info.thrower, owner, item: item.name, count: item.count, affection: r });
   }
 

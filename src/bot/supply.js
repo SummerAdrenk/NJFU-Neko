@@ -3,7 +3,7 @@
 //   2. 背包不够，但记得的箱子里够 → 先问主人要不要去箱子拿；
 //   3. 都不够，或者主人不让拿 → 自己去采集、熔炼、合成（需要工作台、熔炉、镐子就先做出来）。
 import { craftingPlan } from '../knowledge/mcKnowledge.js';
-import { collectCore, collectManuallyCore, craftCore, smeltCore, withChest } from './actions.js';
+import { collectCore, collectManuallyCore, craftCore, handToPlayer, smeltCore, withChest } from './actions.js';
 import { itemForBlock } from './build.js';
 import { countItem, findNearestBlock, findPlayer, resolveBlockIds, Vec3 } from './helpers.js';
 import { getLog } from '../log.js';
@@ -195,11 +195,12 @@ export async function gather(agent, name, count, signal, depth = 0, notes = []) 
   throw new Error(`不知道怎么弄到 ${name}（可能要打怪、交易或钓鱼），需要主人帮忙准备`);
 }
 
-// 建造前的备料流程。返回给玩家看的说明；实在弄不到会抛出错误。
+// 建造前的备料流程。返回 { text: 给玩家看的说明, withdrawn: 从箱子拿了什么 }；实在弄不到会抛出错误。
 export async function prepareMaterials(agent, needs, signal, ctx) {
   const bot = agent.bot;
   const { missing, fromChests, uncovered } = shortage(agent, needs);
-  if (!missing.length) return '材料都在背包里';
+  const withdrawn = [];
+  if (!missing.length) return { text: '材料都在背包里', withdrawn };
   let tookFromChests = false;
   if (fromChests.length && !uncovered.length) {
     const asker = whomToAsk(agent, ctx);
@@ -210,12 +211,13 @@ export async function prepareMaterials(agent, needs, signal, ctx) {
     if (answer) {
       log.info(`从箱子拿材料：${listText(fromChests.map((c) => [c.name, c.take]))}`);
       await withdrawFromChests(agent, fromChests, signal);
+      withdrawn.push(...fromChests);
       tookFromChests = true;
     } else if (answer === false) agent.say('好，那我自己去弄材料喵');
     else if (asker) agent.say('没等到回答，那我自己去弄材料吧');
   }
   const still = shortage(agent, needs).missing;
-  if (!still.length) return tookFromChests ? '从箱子里拿齐了材料' : '材料齐了';
+  if (!still.length) return { text: tookFromChests ? '从箱子里拿齐了材料' : '材料齐了', withdrawn };
   const total = still.reduce((s, [, c]) => s + c, 0);
   if (total > 640) throw new Error(`还缺太多材料（${listText(still)}，共 ${total} 个），我一个人弄不过来——先准备一些，或者让我用命令建`);
   agent.say(`还缺 ${listText(still)}，我去采集和合成（需要工作台、熔炉、工具也会自己做）`);
@@ -223,5 +225,64 @@ export async function prepareMaterials(agent, needs, signal, ctx) {
   for (const [name, lack] of still) {
     await gather(agent, name, countItem(bot, name) + lack, signal, 0, notes);
   }
-  return `自己准备了材料：${notes.slice(0, 10).join('，')}${notes.length > 10 ? ' 等' : ''}`;
+  return { text: `自己准备了材料：${notes.slice(0, 10).join('，')}${notes.length > 10 ? ' 等' : ''}`, withdrawn };
+}
+
+// 把东西存进某个箱子。返回存进去的数量。
+async function depositTo(agent, pos, name, count, signal) {
+  const bot = agent.bot;
+  const id = bot.registry.itemsByName[name]?.id;
+  if (id == null) return 0;
+  let done = 0;
+  await withChest(agent, pos, signal, async (chest) => {
+    const n = Math.min(count, countItem(bot, name));
+    if (n > 0) {
+      await chest.deposit(id, null, n);
+      done = n;
+    }
+  });
+  return done;
+}
+
+// 没用完的材料放回去：
+//   1. 从箱子拿的 → 放回原来的箱子；
+//   2. 别人给的（活开始前 10 分钟内和干活时收到的）→ 还给他（他不在附近就放进箱子）；
+//   3. 自己采的 → 放进附近存着同样东西的箱子（没有就先留着）。
+// before：开工前背包里各物品的数量。返回说明列表。
+export async function returnLeftovers(agent, needs, before, withdrawn, since, signal) {
+  const bot = agent.bot;
+  const notes = [];
+  const gifts = (agent.giftLedger ?? []).filter((g) => g.t >= since && g.count > 0);
+  for (const [name] of needs) {
+    const giftedBefore = gifts.filter((g) => g.item === name && g.t < since + 10 * 60_000).reduce((s, g) => s + g.count, 0);
+    let extra = countItem(bot, name) - Math.max(0, (before[name] ?? 0) - giftedBefore);
+    if (extra <= 0) continue;
+    for (const w of withdrawn.filter((x) => x.name === name)) {
+      if (extra <= 0) break;
+      const n = await depositTo(agent, new Vec3(w.x, w.y, w.z), name, Math.min(extra, w.take), signal).catch(() => 0);
+      if (n) {
+        extra -= n;
+        notes.push(`${name}×${n} 放回了箱子 (${w.x}, ${w.y}, ${w.z})`);
+      }
+    }
+    for (const g of gifts.filter((x) => x.item === name)) {
+      if (extra <= 0) break;
+      const n = Math.min(extra, g.count);
+      const p = findPlayer(bot, g.player)?.entity;
+      const item = bot.inventory.items().find((i) => i.name === name);
+      if (!p || !item || p.position.distanceTo(bot.entity.position) > 64) continue;
+      await handToPlayer(agent, g.player, item.type, n, signal).catch(() => {});
+      g.count -= n;
+      extra -= n;
+      notes.push(`${name}×${n} 还给了 ${g.player}`);
+    }
+    if (extra > 0) {
+      const home = agent.chestIndex.find(name, bot.entity.position).filter((c) => c.distance < 48)[0];
+      if (home) {
+        const n = await depositTo(agent, new Vec3(home.x, home.y, home.z), name, extra, signal).catch(() => 0);
+        if (n) notes.push(`${name}×${n} 放进了箱子 (${home.x}, ${home.y}, ${home.z})`);
+      } else notes.push(`${name}×${extra} 我先收着`);
+    }
+  }
+  return notes;
 }

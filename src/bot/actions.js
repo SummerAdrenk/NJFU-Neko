@@ -9,7 +9,7 @@ import {
   nearestCreeper, nearestThreat, normalizeName, placeNearby, protectedReason, resolveBlockIds, resolveItem, summarizeItems, unknownName, Vec3,
 } from './helpers.js';
 import { canEngage, creeperPlan, fight, pickTarget } from './combat.js';
-import { materialsFor, prepareMaterials } from './supply.js';
+import { inventoryCounts, materialsFor, prepareMaterials, returnLeftovers } from './supply.js';
 import { elytraTravel, pillarUp, ride, tame, usePortal } from './movement.js';
 import { ALLY_KINDS, listPotions, offensiveKindsFor, throwPotionAt, usePotion } from './potions.js';
 import { describeStatus } from './status.js';
@@ -583,6 +583,19 @@ const CHEST_ACTIONS = { list: '查看', deposit: '存入', withdraw: '取出' };
 const CONTAINER = /chest|barrel|shulker_box|hopper|dispenser|dropper/;
 
 // 走到容器旁打开它，执行 fn(win, block)，结束后记住容器内容并关闭。不开新任务，可以在别的任务里连续使用。
+// 大箱子的另一半（单箱子返回 null）
+const CHEST_DIRS = { north: [0, -1], south: [0, 1], west: [-1, 0], east: [1, 0] };
+const CLOCKWISE = { north: 'east', east: 'south', south: 'west', west: 'north' };
+const COUNTER = { north: 'west', west: 'south', south: 'east', east: 'north' };
+export function chestPartner(bot, pos) {
+  const block = bot.blockAt(pos);
+  if (!block || !/chest$/.test(block.name)) return null;
+  const { type, facing } = block.getProperties?.() ?? {};
+  if (!type || type === 'single' || !CHEST_DIRS[facing]) return null;
+  const [dx, dz] = CHEST_DIRS[type === 'left' ? CLOCKWISE[facing] : COUNTER[facing]];
+  return pos.offset(dx, 0, dz);
+}
+
 export async function withChest(agent, pos, signal, fn) {
   const bot = agent.bot;
   const block = bot.blockAt(pos);
@@ -595,6 +608,8 @@ export async function withChest(agent, pos, signal, fn) {
   } finally {
     try {
       agent.chestIndex.record(pos, block.name, win.containerItems(), dim);
+      const partner = chestPartner(bot, pos);
+      if (partner) agent.chestIndex.record(partner, block.name, win.containerItems(), dim);
     } catch {
       // 窗口已失效
     }
@@ -685,7 +700,7 @@ async function runCommand(agent, command, ctx) {
 
 // ── 交给玩家 ─────────────────────────────────────────────
 
-async function handToPlayer(agent, username, itemType, count, signal) {
+export async function handToPlayer(agent, username, itemType, count, signal) {
   const bot = agent.bot;
   let target = findPlayer(bot, username)?.entity;
   if (target && bot.entity.position.distanceTo(target.position) > 3) {
@@ -707,11 +722,20 @@ function chooseBuildMode(agent, requested, ctx) {
 }
 
 // 亲手建之前备料：背包够就直接建；不够但箱子里够就问主人；都不够或者主人不让拿，就自己采集合成。
+// 建完把没用完的材料放回去：从箱子拿的回原箱子，别人给的还给他，自己采的放进存着同样东西的箱子。
 async function buildWithMaterials(agent, list, how, task, ctx, onProgress) {
-  let prep = '';
-  if (how === 'survival') prep = await prepareMaterials(agent, materialsFor(agent.bot, list), task.signal, ctx);
+  if (how !== 'survival') return buildBlocks(agent, list, { mode: how, signal: task.signal, onProgress });
+  const needs = materialsFor(agent.bot, list);
+  const started = Date.now();
+  const before = inventoryCounts(agent.bot);
+  const prep = await prepareMaterials(agent, needs, task.signal, ctx);
   const result = await buildBlocks(agent, list, { mode: how, signal: task.signal, onProgress });
-  return prep && prep !== '材料都在背包里' ? `${prep}；${result}` : result;
+  const returned = await returnLeftovers(agent, needs, before, prep.withdrawn, started - 10 * 60_000, task.signal).catch((err) => [`放回剩余材料时出错：${err.message}`]);
+  const parts = [];
+  if (prep.text !== '材料都在背包里') parts.push(prep.text);
+  parts.push(result);
+  if (returned.length) parts.push(`剩下的：${returned.join('，')}`);
+  return parts.join('；');
 }
 
 function buildAction(agent, { blocks, mode }, ctx) {

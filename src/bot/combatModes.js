@@ -8,22 +8,22 @@ const log = getLog('战斗');
 
 const BASE = {
   crits: false, shield: true, boat_trap: false, bow: true, creeper_melee: false, potions: true, pillar: false, golden_apples: true,
-  enchanted_apples: false, totem: true, water: false, lava: false, elytra: false, sweep: true, kite: true, engage_radius: 12, retreat_bonus: 2,
+  enchanted_apples: false, totem: true, water: false, lava: false, elytra: false, sweep: true, kite: true, retreat_bonus: 2,
 };
 export const MODES = {
   普通: { ...BASE },
-  困难: { ...BASE, crits: true, boat_trap: true, creeper_melee: true, pillar: true, water: true, engage_radius: 20, retreat_bonus: 0 },
+  困难: { ...BASE, crits: true, boat_trap: true, creeper_melee: true, pillar: true, water: true, retreat_bonus: 0 },
   极限: {
     ...BASE, crits: true, boat_trap: true, creeper_melee: true, pillar: true, water: true, lava: true, elytra: true, enchanted_apples: true,
-    engage_radius: 28, retreat_bonus: -2,
+    retreat_bonus: -2,
   },
 };
-MODES.作弊 = { ...MODES.极限, cheat: true, engage_radius: 32 };
+MODES.作弊 = { ...MODES.极限, cheat: true };
 export const MODE_NAMES = Object.keys(MODES);
 export const MODE_DESC = {
   普通: '会用盾牌、弓箭、药水和金苹果救急；不跳劈、不船困',
   困难: '跳劈、横扫、边打边退、船困怪、水桶冲开怪群、垫高躲怪、按引信打苦力怕',
-  极限: '困难的全部 + 岩浆桶烫怪、鞘翅撤离、附魔金苹果，索敌范围更大，撤退线更低',
+  极限: '困难的全部 + 岩浆桶烫怪、鞘翅撤离、附魔金苹果，撤退线更低',
   作弊: '极限 + 临时的顶级附魔装备（下界合金或钻石套）、附魔金苹果、不死图腾、各种药水，切回来时收回',
 };
 const ALIASES = { normal: '普通', easy: '普通', hard: '困难', extreme: '极限', max: '极限', cheat: '作弊' };
@@ -36,9 +36,9 @@ export function combatFlags(agent) {
   const preset = MODES[mode];
   const out = { mode };
   for (const [k, v] of Object.entries(preset)) out[k] = typeof v === 'boolean' ? v && c[k] !== false : v;
-  // #设置 索敌范围 / config 里填了就用填的
+  // 日常索敌范围和模式无关：默认 64 格（#设置 索敌范围 可改）
   const r = Number(c.engage_radius);
-  if (Number.isFinite(r) && r > 0) out.engage_radius = Math.min(64, Math.max(4, r));
+  out.engage_radius = Number.isFinite(r) && r > 0 ? Math.min(96, Math.max(4, r)) : 64;
   return out;
 }
 

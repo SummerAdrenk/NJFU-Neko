@@ -253,8 +253,8 @@ function canSee(bot, e) {
   }
 }
 
-// 索敌：从身边和主人身边的怪里挑最该打的。范围随战斗模式（普通 12 / 困难 20 / 极限 28 / 作弊 32 格，#设置 索敌范围 可改）；
-// 打过人的、被激怒的、主人打过射过的至少 32 格；看不见的（墙后、地底下）只处理 6 格内的。
+// 索敌：从身边和主人身边的怪里挑最该打的。日常范围 64 格（#设置 索敌范围 可改，和战斗模式无关）；
+// 看不见的（墙后、地底下）只处理 6 格内的；走不过去的（追了一阵没进展）1 分钟内不再选。
 // 优先级：打过人的 > 被激怒的 > 正在追人的 > 靠近主人的苦力怕 > 远程怪 > 近的。
 export function pickTarget(agent, ownerName = null) {
   const bot = agent.bot;
@@ -271,8 +271,8 @@ export function pickTarget(agent, ownerName = null) {
     const angry = provoked(agent, e);
     const hitSomeone = recentlyAttacked(agent, e);
     const aggressive = (Number(meta(bot, e, 'mob_flags') ?? 0) & 4) !== 0;
-    const limit = angry || hitSomeone ? Math.max(f.engage_radius, 32) : f.engage_radius;
-    if (near > limit || Math.abs(e.position.y - me.y) > 16) continue;
+    if (near > f.engage_radius || Math.abs(e.position.y - me.y) > 24) continue;
+    if ((agent.unreachable?.get(e.id) ?? 0) > Date.now()) continue;
     if (!angry && !hitSomeone && near > 6 && !canSee(bot, e)) continue;
     let score = -near;
     if (hitSomeone) score += 12;
@@ -1147,6 +1147,8 @@ export class Fighter {
 
   async melee(target, until, t = TACTICS.default, { trapped = false } = {}) {
     const bot = this.bot;
+    let best = Infinity;
+    let bestAt = Date.now();
     while (Date.now() < until) {
       this.check();
       if (!alive(bot, target)) return true;
@@ -1155,7 +1157,7 @@ export class Fighter {
       if (t.water && bot.health <= 10 && await this.retreatToWater()) return false;
       const d = flat(bot.entity.position, target.position);
       const dy = target.position.y - bot.entity.position.y;
-      if (d > 48) return false;
+      if (d > 80) return false;
       if (this.perched) {
         // 在柱子上：够得着就打，有弓就射，血回来了或者怪少了再下去
         await this.face(target);
@@ -1179,6 +1181,16 @@ export class Fighter {
         continue;
       }
       if (d > 5 || Math.abs(dy) > 2.5) {
+        // 追了 12 秒没靠近（隔着河、悬崖、墙）：放弃，1 分钟内不再选它
+        if (d < best - 1.5) {
+          best = d;
+          bestAt = Date.now();
+        } else if (Date.now() - bestAt > 12_000) {
+          this.agent.unreachable ??= new Map();
+          this.agent.unreachable.set(target.id, Date.now() + 60_000);
+          log.debug(`${target.name} 走不过去，先不管它`);
+          return false;
+        }
         if (!(t.ranged && bot.health < 14 && this.blockIfThreatened())) this.lower();
         this.follow(target, Math.max(1, (trapped ? 2.5 : t.spacing) - 0.5));
         await this.wait(100);

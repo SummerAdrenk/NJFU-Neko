@@ -4,7 +4,7 @@ import { goals, makeMovements } from './createBot.js';
 import {
   countItem, findNearestBlock, findPlayer, fleeFrom, isAliveEntity, nearestCreeper, nearestThreat, protectedReason, summarizeItems,
 } from './helpers.js';
-import { smeltCore, withChest } from './actions.js';
+import { chestPartner, smeltCore, withChest } from './actions.js';
 import { canEngage, creeperPlan, fight, outnumbered, pickTarget, retreatFromCrowd } from './combat.js';
 import { pickFood } from './survival.js';
 import { freeSeat, isPortalNear, mountEntity, usePortal } from './movement.js';
@@ -78,7 +78,7 @@ export async function accompanyLoop(agent, username, task, { minDist = 2, maxDis
     const threat = creeper ?? (assist?.isValid && canEngage(agent, assist) ? assist : null) ?? pickTarget(agent, username);
     if (threat) {
       try {
-        await fight(agent, threat, task.signal, 30_000);
+        await fight(agent, threat, task.signal, 60_000);
       } catch (err) {
         if (task.signal.aborted) throw err;
       }
@@ -203,14 +203,23 @@ export function installCompanion(agent, bot) {
   let lastAskFood = 0;
   let busy = false;
 
-  // 翻箱子：附近 16 格里没打开过（或者半小时没看过）的箱子，打开看一眼记下来（只看不拿）
-  async function surveyChests(limit = 2) {
+  // 翻箱子：附近 48 格里没打开过（或者 20 分钟没看过）的箱子，打开看一眼记下来（只看不拿）；大箱子两半只开一次
+  async function surveyChests(limit = 8) {
     const ids = ['chest', 'trapped_chest', 'barrel'].map((n) => bot.registry.blocksByName[n]?.id).filter((x) => x != null);
     const stale = (p) => {
       const t = agent.chestIndex.seenAt(p);
-      return !t || Date.now() - Date.parse(t) > 30 * 60_000;
+      return !t || Date.now() - Date.parse(t) > 20 * 60_000;
     };
-    const spots = bot.findBlocks({ matching: ids, maxDistance: 16, count: 24 }).filter(stale).slice(0, limit);
+    const seen = new Set();
+    const spots = [];
+    for (const p of bot.findBlocks({ matching: ids, maxDistance: 48, count: 512 })) {
+      if (spots.length >= limit) break;
+      if (seen.has(p.toString()) || !stale(p)) continue;
+      seen.add(p.toString());
+      const partner = chestPartner(bot, p);
+      if (partner) seen.add(partner.toString());
+      spots.push(p);
+    }
     if (!spots.length) return false;
     await agent.tasks.run('survey', `翻看附近的 ${spots.length} 个箱子`, async (task) => {
       for (const p of spots) {
@@ -232,7 +241,7 @@ export function installCompanion(agent, bot) {
     if (pickFood(bot) || bot.food > 14) return false;
     if (cfg.use_chests && Date.now() - lastSurvey > 120_000) {
       lastSurvey = Date.now();
-      if (await surveyChests(3)) return true;
+      if (await surveyChests(8)) return true;
     }
     if (bot.food > 12 || Date.now() - lastHuntAsk < 10 * 60_000) return false;
     const owner = companionTarget(agent);
@@ -349,10 +358,10 @@ export function installCompanion(agent, bot) {
         if (await gearUp()) return;
       }
       if (cfg.auto_eat && await seekFood()) return;
-      // 平时也顺手翻翻附近没看过的箱子（每 5 分钟最多 2 个），缺东西时知道去哪拿
-      if (cfg.use_chests && cfg.survey_chests !== false && Date.now() - lastSurvey > 300_000) {
+      // 平时也顺手翻翻附近没看过的箱子（每 3 分钟一轮，一轮最多 8 个），缺东西时知道去哪拿
+      if (cfg.use_chests && cfg.survey_chests !== false && Date.now() - lastSurvey > 180_000) {
         lastSurvey = Date.now();
-        if (await surveyChests(2)) return;
+        if (await surveyChests(8)) return;
       }
       if (cfg.companion && !cur) {
         const owner = companionTarget(agent);
