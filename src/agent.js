@@ -18,13 +18,14 @@ import { Duels } from './bot/duel.js';
 import { createEmotes, installInteractions } from './bot/emotes.js';
 import { TextureIndex } from './bot/textures.js';
 import { runAction } from './bot/actions.js';
-import { findPlayer } from './bot/helpers.js';
+import { findPlayer, Vec3 } from './bot/helpers.js';
 import { showMenuDialog, supportsDialog } from './bot/inventoryView.js';
 import { MemoryStore } from './memory.js';
 import { Affection } from './affection.js';
 import { ChestIndex } from './chestIndex.js';
 import { startViaProxy } from './proxy/viaproxy.js';
-import { AFFECTION_FILE, CHESTS_FILE, MEMORY_FILE, REQUESTS_FILE } from './paths.js';
+import fs from 'node:fs';
+import { AFFECTION_FILE, CHESTS_FILE, HOME_FILE, MEMORY_FILE, REQUESTS_FILE } from './paths.js';
 import { RequestStore } from './requests.js';
 import { getLog } from './log.js';
 import { componentText, fmtPos, sleep, withTimeout } from './util.js';
@@ -90,10 +91,26 @@ export class Agent extends EventEmitter {
     this.onlineSince = 0;
     this.seated = false;
     this.homeBed = null;
+    try {
+      const h = JSON.parse(fs.readFileSync(HOME_FILE, 'utf8'));
+      if (Number.isFinite(h.x)) this.homeBed = new Vec3(h.x, h.y, h.z);
+    } catch {
+      // 还没有家
+    }
     this.assistTarget = null;
     this.worldSeed = null;
     this.myBoats = new Set();
     this.on('panel', (ev) => this.onPanel(ev));
+  }
+
+  // 记住家（睡过的床）的位置，重启后也记得
+  setHome(pos) {
+    this.homeBed = pos.clone();
+    try {
+      fs.writeFileSync(HOME_FILE, `${JSON.stringify({ x: pos.x, y: pos.y, z: pos.z, at: new Date().toISOString() })}\n`);
+    } catch {
+      // 写不了就只记在内存里
+    }
   }
 
   say(text, opts) {

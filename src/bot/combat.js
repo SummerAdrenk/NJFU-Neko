@@ -4,8 +4,8 @@
 // 以及苦力怕（按引信进度出手和撤离）、末影人、恶魂、烈焰人、幻翼、凋灵、末影龙等的专门打法。
 import { goals, makeMovements } from './createBot.js';
 import {
-  canMelee, equipBestWeapon, findPlayer, fleeFrom, gotoGoal, isAliveEntity, isEmpty, isHostile, isVehicleItemEntity, LowHealthError,
-  nearestThreat, preferRider, protectedReason, Vec3,
+  canMelee, durabilityLeft, equipBestWeapon, findPlayer, fleeFrom, gotoGoal, isAliveEntity, isEmpty, isHostile, isVehicleItemEntity, isWorn,
+  LowHealthError, nearestThreat, preferRider, protectedReason, Vec3,
 } from './helpers.js';
 import { ARROW, SNOWBALL, solveBallistic } from './ballistics.js';
 import { combatFlags } from './combatModes.js';
@@ -310,6 +310,9 @@ export async function retreatFromCrowd(agent, signal, ms = 9000) {
       if (signal?.aborted) throw err;
     }
   }
+  // 末影珍珠：往怪群的反方向（或主人那边）扔，落地就传送过去（会掉 2.5 颗心，血太少不用）
+  const pearl = f.pearls && bot.health > 7 ? bot.inventory.items().find((i) => i.name === 'ender_pearl') : null;
+  if (pearl && await pearlAway(agent, pearl, owner && owner.position.distanceTo(center) > 12 ? towardUnit(me, owner.position) : new Vec3(away.x / n, 0, away.z / n), signal)) return;
   const goal = owner && owner.position.distanceTo(center) > me.distanceTo(center) + 3
     ? new goals.GoalFollow(owner, 2)
     : new goals.GoalXZ(me.x + (away.x / n) * 18, me.z + (away.z / n) * 18);
@@ -321,6 +324,39 @@ export async function retreatFromCrowd(agent, signal, ms = 9000) {
   } finally {
     bot.pathfinder.setGoal(null);
   }
+}
+
+// 扔末影珍珠逃到 dir 方向 12～20 格外的一块安全地面上。成功传送返回 true。
+async function pearlAway(agent, pearl, dir, signal) {
+  const bot = agent.bot;
+  const me = bot.entity.position;
+  for (const dist of [18, 15, 12]) {
+    const p = me.plus(dir.scaled(dist));
+    for (let y = Math.floor(p.y) + 6; y >= Math.floor(p.y) - 8; y--) {
+      const ground = bot.blockAt(new Vec3(Math.floor(p.x), y, Math.floor(p.z)));
+      const above = bot.blockAt(new Vec3(Math.floor(p.x), y + 1, Math.floor(p.z)));
+      const above2 = bot.blockAt(new Vec3(Math.floor(p.x), y + 2, Math.floor(p.z)));
+      if (!ground || !solid(ground)) continue;
+      if (DANGER.test(ground.name) || solid(above) || solid(above2) || /water|lava/.test(`${above?.name}`)) break;
+      const landing = ground.position.offset(0.5, 1, 0.5);
+      const sol = solveBallistic(eye(bot).offset(0, -0.1, 0), landing, SNOWBALL);
+      if (!sol) break;
+      await holdItem(bot, pearl);
+      await bot.look(sol.yaw, sol.pitch, true);
+      bot.activateItem();
+      bot.deactivateItem();
+      const start = bot.entity.position.clone();
+      const until = Date.now() + 3500;
+      while (Date.now() < until && bot.entity.position.distanceTo(start) < 6) await sleep(100, signal);
+      await equipBestWeapon(bot);
+      if (bot.entity.position.distanceTo(start) >= 6) {
+        agent.events.push('bot', { what: 'combat', detail: '扔末影珍珠逃出了怪群' });
+        return true;
+      }
+      return false;
+    }
+  }
+  return false;
 }
 
 // 各种怪的近战参数：spacing 保持的距离；boat 优先放船困住；boatWhenWeak 打不过时才放船；
@@ -520,7 +556,7 @@ export class Fighter {
   }
 
   async ensureWeapon() {
-    if (isMeleeWeapon(this.bot.heldItem)) return true;
+    if (isMeleeWeapon(this.bot.heldItem) && !isWorn(this.bot.heldItem)) return true;
     const before = this.bot.heldItem?.name;
     const w = await equipBestWeapon(this.bot);
     if (this.bot.heldItem?.name !== before) this.lastSwap = Date.now();
@@ -917,6 +953,21 @@ export class Fighter {
     this.lastSwap = Date.now();
     await this.ensureWeapon();
     return true;
+  }
+
+  // 打完把插在地上的箭捡回来（骷髅射的捡不起来，走过去也没关系）
+  async collectArrows() {
+    const bot = this.bot;
+    if (!this.stats.shots) return;
+    const arrows = Object.values(bot.entities)
+      .filter((e) => /^(arrow|spectral_arrow)$/.test(e.name ?? '') && meta(bot, e, 'in_ground') === true && e.position.distanceTo(bot.entity.position) < 24)
+      .sort((a, b) => a.position.distanceTo(bot.entity.position) - b.position.distanceTo(bot.entity.position))
+      .slice(0, 8);
+    for (const a of arrows) {
+      if (!a.isValid || meleeHostiles(this.agent, 8).length) break;
+      await gotoGoal(this.agent, new goals.GoalNear(a.position.x, a.position.y, a.position.z, 0.8), { timeoutMs: 5000 }).catch(() => {});
+      await sleep(150);
+    }
   }
 
   // 打完把倒出去的水和岩浆收回来（只收源头方块）
@@ -1603,6 +1654,7 @@ export async function fight(agent, target, signal, timeoutMs = 45_000, opts = {}
     if (!signal?.aborted) {
       await f.collectBoats().catch(() => {});
       await f.collectFluids().catch(() => {});
+      await f.collectArrows().catch(() => {});
     }
     await sleep(50);
   }
@@ -1642,6 +1694,25 @@ export function installCombatSense(agent, bot) {
       if (off?.name === 'totem_of_undying' && !agent.fighting && Date.now() - lastFight > 10_000 && bot.health >= 16 && !busy()) {
         const shield = bot.inventory.items().find((i) => i.name === 'shield');
         if (shield) await bot.equip(shield, 'off-hand').catch(() => {});
+      }
+      // 盔甲快坏了：身上有同类的就换上，没有就提醒一次
+      if (!agent.fighting && Date.now() - (agent.lastArmorCheck ?? 0) > 10_000 && !busy()) {
+        agent.lastArmorCheck = Date.now();
+        for (const [dest, re, label] of [['head', /_helmet$/, '头盔'], ['torso', /_chestplate$/, '胸甲'], ['legs', /_leggings$/, '护腿'], ['feet', /_boots$/, '靴子']]) {
+          const cur = bot.inventory.slots[bot.getEquipmentDestSlot(dest)];
+          if (!cur || !isWorn(cur)) continue;
+          const spare = bot.inventory.items().filter((i) => re.test(i.name) && !isWorn(i)).sort((a, b) => durabilityLeft(b) - durabilityLeft(a))[0];
+          if (spare) {
+            await bot.equip(spare, dest).catch(() => {});
+            agent.events.push('bot', { what: 'combat', detail: `${cur.name} 快坏了，换上了 ${spare.name}` });
+          } else {
+            agent.wornWarned ??= new Set();
+            if (!agent.wornWarned.has(cur.name)) {
+              agent.wornWarned.add(cur.name);
+              agent.say(`我的${label}（${cur.name}）快坏了，只剩 ${durabilityLeft(cur)} 点耐久，主人有空帮我修一修或者换一件喵`);
+            }
+          }
+        }
       }
       // 溺水：氧气不多了就往上游
       if (bot.entity.isInWater && (bot.oxygenLevel ?? 20) < 8) {

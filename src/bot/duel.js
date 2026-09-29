@@ -11,9 +11,9 @@ import { abortError, sleep } from '../util.js';
 const STATS_FILE = path.join(RUNTIME, 'duels.json');
 const WEAPON_DAMAGE = { netherite_sword: 8, diamond_sword: 7, iron_sword: 6, stone_sword: 5, golden_sword: 4, wooden_sword: 4, netherite_axe: 10, diamond_axe: 9, iron_axe: 9, stone_axe: 9, golden_axe: 7, wooden_axe: 7, mace: 6, trident: 9 };
 const LEVELS = {
-  easy: { name: '简单', interval: 1100, strafe: false, crit: false, shield: false, reach: 2.6 },
-  normal: { name: '普通', interval: 0, strafe: true, crit: false, shield: true, reach: 3.0 },
-  hard: { name: '困难', interval: 0, strafe: true, crit: true, shield: true, reach: 3.0 },
+  easy: { name: '简单', interval: 1100, strafe: false, crit: false, shield: false, axeBreak: false, reach: 2.6 },
+  normal: { name: '普通', interval: 0, strafe: true, crit: false, shield: true, axeBreak: true, reach: 3.0 },
+  hard: { name: '困难', interval: 0, strafe: true, crit: true, shield: true, axeBreak: true, reach: 3.0 },
 };
 
 function attackCooldown(item) {
@@ -91,6 +91,13 @@ export class Duels {
     const bot = agent.bot;
     const say = (text) => agent.say(text);
     const healthKey = bot.registry.entitiesByName.player?.metadataKeys?.indexOf('health') ?? 9;
+    const flagsKey = bot.registry.entitiesByName.player?.metadataKeys?.indexOf('living_entity_flags') ?? 8;
+    // 对方正在举盾（手在用、用的那只手拿着盾牌）
+    const isBlocking = (p) => {
+      const f = Number(p?.metadata?.[flagsKey] ?? 0);
+      if ((f & 1) !== 1) return false;
+      return ((f & 2) === 2 ? p.equipment?.[1] : p.equipment?.[0])?.name === 'shield';
+    };
     const playerHealth = (e) => Number(e?.metadata?.[healthKey] ?? 20);
     const weapon = await equipBestWeapon(bot);
     await bot.armorManager?.equipAll?.();
@@ -158,6 +165,20 @@ export class Duels {
           bot.setControlState('right', strafeDir === 'right');
         }
         const interval = level.interval || attackCooldown(bot.heldItem);
+        // 对方举着盾：换斧子砍一下把盾打掉（5 秒用不了盾），再换回剑
+        const axe = level.axeBreak && isBlocking(e) && reachTo(bot, e) <= level.reach ? bot.inventory.items().find((i) => /_axe$/.test(i.name)) : null;
+        if (axe && Date.now() >= nextAttack - 300) {
+          fighter.lower();
+          await bot.equip(axe, 'hand').catch(() => {});
+          await sleep(100, task.signal);
+          fighter.hit(e);
+          say('破盾！');
+          await sleep(150, task.signal);
+          await equipBestWeapon(bot);
+          fighter.lastSwap = Date.now();
+          nextAttack = Date.now() + 400;
+          continue;
+        }
         if (dist <= level.reach + 0.5 && Date.now() >= nextAttack) {
           // 困难：跳劈（等到下落时出手才算暴击）；否则普通出手。出手前放下盾牌
           const crit = level.crit && Math.random() < 0.7 && await fighter.critStrike(e);

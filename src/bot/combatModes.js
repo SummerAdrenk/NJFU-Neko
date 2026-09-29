@@ -8,13 +8,13 @@ const log = getLog('战斗');
 
 const BASE = {
   crits: false, shield: true, boat_trap: false, bow: true, creeper_melee: false, potions: true, pillar: false, golden_apples: true,
-  enchanted_apples: false, totem: true, water: false, lava: false, elytra: false, sweep: true, kite: true, retreat_bonus: 2,
+  enchanted_apples: false, totem: true, water: false, lava: false, elytra: false, pearls: false, sweep: true, kite: true, retreat_bonus: 2,
 };
 export const MODES = {
   普通: { ...BASE },
-  困难: { ...BASE, crits: true, boat_trap: true, creeper_melee: true, pillar: true, water: true, retreat_bonus: 0 },
+  困难: { ...BASE, crits: true, boat_trap: true, creeper_melee: true, pillar: true, water: true, pearls: true, retreat_bonus: 0 },
   极限: {
-    ...BASE, crits: true, boat_trap: true, creeper_melee: true, pillar: true, water: true, lava: true, elytra: true, enchanted_apples: true,
+    ...BASE, crits: true, boat_trap: true, creeper_melee: true, pillar: true, water: true, lava: true, elytra: true, pearls: true, enchanted_apples: true,
     retreat_bonus: -2,
   },
 };
@@ -61,7 +61,7 @@ function cheatKit(tier, { gapples = 4, totems = 2, potions = true, elytra = fals
     ['bow', { power: 5, punch: 1, flame: 1, infinity: 1, unbreaking: 3 }, 1],
     ['shield', { unbreaking: 3, mending: 1 }, 1],
   ].map(([item, e, n]) => `${item}[${ench(e)},${TEMP}] ${n}`);
-  kit.push(`arrow[${TEMP}] 64`, `golden_apple[${TEMP}] 16`, `cooked_beef[${TEMP}] 32`, `oak_boat[${TEMP}] 1`, `water_bucket[${TEMP}] 1`, `cobblestone[${TEMP}] 64`);
+  kit.push(`arrow[${TEMP}] 64`, `ender_pearl[${TEMP}] 16`, `golden_apple[${TEMP}] 16`, `cooked_beef[${TEMP}] 32`, `oak_boat[${TEMP}] 1`, `water_bucket[${TEMP}] 1`, `cobblestone[${TEMP}] 64`);
   if (gapples > 0) kit.push(`enchanted_golden_apple[${TEMP}] ${gapples}`);
   if (totems > 0) kit.push(`totem_of_undying[${TEMP}] ${totems}`);
   if (potions) {

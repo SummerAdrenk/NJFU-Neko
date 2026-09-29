@@ -305,15 +305,30 @@ const WEAPON_RANK = ['netherite_sword', 'diamond_sword', 'netherite_axe', 'iron_
   'wooden_sword', 'stone_axe', 'golden_axe', 'wooden_axe', 'netherite_spear', 'diamond_spear', 'iron_spear', 'copper_spear', 'stone_spear',
   'golden_spear', 'wooden_spear', 'mace', 'trident'];
 
+// 耐久还剩多少（没有耐久的东西返回 Infinity）；快坏了 = 剩不到 4%（至少 8 点）
+export function durabilityLeft(item) {
+  const max = item?.maxDurability;
+  if (!max) return Infinity;
+  return max - (item.durabilityUsed ?? 0);
+}
+export const isWorn = (item) => durabilityLeft(item) < Math.max(8, (item?.maxDurability ?? 0) * 0.04);
+
+// 拿上最好的武器；同一种挑耐久多的，快坏的先放着（实在没别的才用）
 export async function equipBestWeapon(bot) {
+  let fallback = null;
   for (const name of WEAPON_RANK) {
-    const item = bot.inventory.items().find((i) => i.name === name);
-    if (item) {
-      if (bot.heldItem?.name !== name) await bot.equip(item, 'hand').catch(() => {});
-      return name;
+    const item = bot.inventory.items().filter((i) => i.name === name).sort((a, b) => durabilityLeft(b) - durabilityLeft(a))[0];
+    if (!item) continue;
+    if (isWorn(item)) {
+      fallback ??= item;
+      continue;
     }
+    if (bot.heldItem?.slot !== item.slot) await bot.equip(item, 'hand').catch(() => {});
+    return name;
   }
-  return null;
+  if (!fallback) return null;
+  if (bot.heldItem?.slot !== fallback.slot) await bot.equip(fallback, 'hand').catch(() => {});
+  return fallback.name;
 }
 
 export class LowHealthError extends Error {

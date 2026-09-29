@@ -108,6 +108,8 @@ dig_while_pathing = false
 scaffold = true
 # 防摔：从高处掉下来时落地前倒水（下界不行）、用鞘翅滑翔或者放船坐进去，不摔伤
 fall_safety = true
+# 在家（睡过的床）周围 24 格内太黑的露天天然地面上插火把，防止刷怪（一轮最多 4 个，火把不够会用煤和木棍做）
+light_up = true
 
 [emotes]
 # 头顶冒爱心、猫叫声等特效（需要管理员权限）
@@ -176,6 +178,8 @@ water = true
 lava = true
 # 被怪群围住、血很少时用鞘翅飞走（只在极限/作弊模式用，要有烟花）
 elytra = true
+# 被怪群围住时扔末影珍珠逃走（困难以上；会掉 2.5 颗心，血太少不用）
+pearls = true
 # 附魔金苹果（普通/困难模式只在打 Boss 时吃）
 enchanted_apples = true
 

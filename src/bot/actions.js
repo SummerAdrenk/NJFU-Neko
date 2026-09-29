@@ -548,7 +548,7 @@ function useBlock(agent, input, ctx) {
     const target = bot.blockAt(pos);
     if (bot.isABed(target)) {
       const rememberBed = () => {
-        agent.homeBed = pos.clone();
+        agent.setHome(pos);
         agent.memory.set('bed', `我的床（重生点）在 ${fmtPos(pos)}`);
       };
       try {
