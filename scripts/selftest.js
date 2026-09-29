@@ -171,6 +171,7 @@ check('模式 作弊', flagsFor('作弊').cheat === true && flagsFor('cheat').mo
 const duelKit = modes.cheatKit('钻石', { duel: true, fire: false }).join(' ');
 check('决斗 作弊装备：只有盔甲武器盾，切磋时不带火焰附加', duelKit.includes('diamond_sword') && duelKit.includes('shield')
   && !duelKit.includes('fire_aspect') && !duelKit.includes('golden_apple') && !duelKit.includes('bow['));
+check('作弊装备 盔甲盾牌发一件穿一件（决斗只要 3 格空位）', modes.kitSlotsNeeded(modes.cheatKit('钻石', { duel: true })) === 3);
 check('药水 亡灵用治疗', potionsMod.offensiveKindsFor({ name: 'zombie' }).includes('healing') && !potionsMod.offensiveKindsFor({ name: 'zombie' }).includes('harming'));
 check('药水 普通怪用伤害', potionsMod.offensiveKindsFor({ name: 'spider' }).includes('harming'));
 const ps = ballistics.solveBallistic(new Vec3(0, 65.5, 0), new Vec3(4, 64, 0), ballistics.SPLASH_POTION);
@@ -234,6 +235,20 @@ const { Duels } = await import('../src/bot/duel.js');
 const duels = new Duels({ cfg: {} });
 duels.last = { player: 'Steve', endedAt: Date.now() };
 check('决斗 刚结束时的余招不扣好感', duels.isDueling('Steve', 5000) && !duels.isDueling('Steve') && !duels.isDueling('Alex', 5000));
+
+const junk = await import('../src/bot/junk.js');
+const junkBot = {
+  inventory: {
+    items: () => [{ name: 'rotten_flesh', count: 5 }, { name: 'diorite', count: 30 }, { name: 'cobblestone', count: 64 }, { name: 'leather_helmet', count: 1 },
+      { name: 'wooden_pickaxe', count: 1 }, { name: 'diamond_pickaxe', count: 1 }, { name: 'wheat_seeds', count: 40 }, { name: 'diamond', count: 3 }],
+    slots: { 5: { name: 'diamond_helmet' } },
+  },
+  getEquipmentDestSlot: (d) => ({ head: 5, torso: 6, legs: 7, feet: 8 })[d],
+  heldItem: null,
+};
+const junkNames = junk.junkPlan(junkBot).map((p) => `${p.item.name}:${p.count}`).sort().join(',');
+check('扔垃圾 该扔的', junkNames === 'diorite:30,leather_helmet:1,rotten_flesh:5,wheat_seeds:24,wooden_pickaxe:1');
+check('扔垃圾 不扔礼物', !junk.junkPlan(junkBot, { gifts: new Set(['leather_helmet']) }).some((p) => p.item.name === 'leather_helmet'));
 
 // 7. 面板模组通知、OpenAI 兼容接口、打码
 const chatMod = await import('../src/bot/chat.js');

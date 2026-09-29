@@ -7,6 +7,7 @@ import {
 import { chestPartner, smeltCore, withChest } from './actions.js';
 import { canEngage, collectOwnBoats, creeperPlan, fight, outnumbered, pickTarget, retreatFromCrowd, retreatHealth } from './combat.js';
 import { pickFood } from './survival.js';
+import { tossJunk } from './junk.js';
 import { freeSeat, isPortalNear, mountEntity, usePortal } from './movement.js';
 import { getLog } from '../log.js';
 import { abortError, sleep } from '../util.js';
@@ -30,6 +31,7 @@ export async function accompanyLoop(agent, username, task, { minDist = 2, maxDis
   let nextHover = Date.now() + 4000;
   let following = null;
   let lastBoatTidy = 0;
+  let lastJunk = 0;
   let lastSeen = null;
   for (;;) {
     if (task.signal.aborted) throw abortError(task.signal);
@@ -94,6 +96,12 @@ export async function accompanyLoop(agent, username, task, { minDist = 2, maxDis
         following = null;
         continue;
       }
+    }
+
+    // 背包快满了（空位 4 格以内）：把没用的东西扔掉（#设置 扔垃圾 可关）
+    if (agent.cfg.behavior.toss_junk !== false && bot.inventory.emptySlotCount() <= 4 && Date.now() - lastJunk > 60_000) {
+      lastJunk = Date.now();
+      if (await tossJunk(agent).catch(() => 0)) continue;
     }
 
     // 坐着（#坐下）：原地坐着陪着，不跟着走；有怪照样起来打（fight 会先站起来）。座位没了（被传送、盔甲架被清掉）就算站起来了

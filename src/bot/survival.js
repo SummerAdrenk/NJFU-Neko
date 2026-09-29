@@ -105,6 +105,7 @@ export function installSurvival(agent, bot) {
     const pos = bot.entity?.position;
     agent.lastDeath = pos ? { position: fmtPos(pos), at: new Date().toISOString() } : null;
     agent.events.push('bot', { what: 'death', position: agent.lastDeath?.position });
+    if (agent.duels?.active) agent.duels.active.died = true; // 决斗中被打倒：算对方赢
     agent.tasks.cancel('猫娘死掉了').catch(() => {});
   });
 

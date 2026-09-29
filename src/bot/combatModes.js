@@ -82,29 +82,45 @@ export function cheatKit(tier, { gapples = 4, totems = 2, potions = true, elytra
   return kit;
 }
 
+// 盔甲、盾牌发一件穿一件：换下来的旧装备正好放进新装备腾出来的那格，所以只有其他东西要占空位
+const WEAR = [['head', /_helmet\[/], ['torso', /_chestplate\[/], ['legs', /_leggings\[/], ['feet', /_boots\[/], ['off-hand', /^shield\[/]];
+const wearSlot = (line) => WEAR.find(([, re]) => re.test(line))?.[0] ?? null;
+export const kitSlotsNeeded = (kit) => kit.filter((line) => !wearSlot(line)).length + 1;
+
+async function waitForTemp(bot, name, ms = 1500) {
+  const until = Date.now() + ms;
+  while (Date.now() < until) {
+    const item = bot.inventory.items().find((i) => i.name === name && isTemp(i));
+    if (item) return item;
+    await sleep(100);
+  }
+  return null;
+}
+
 export async function giveCheatKit(agent, opts = {}) {
   const bot = agent.bot;
   if (agent.identity.opLevel < 2) throw new Error('作弊装备要管理员权限（/give）');
   const free = bot.inventory.emptySlotCount();
   const kit = cheatKit(opts.tier ?? agent.cfg.combat?.cheat_tier, opts);
+  const need = kitSlotsNeeded(kit);
   agent.cheatBuckets ??= bucketCount(bot);
-  if (free < kit.length) throw new Error(`背包空位不够（要 ${kit.length} 格，现在只有 ${free} 格），先帮我清一清背包吧`);
-  // 第一条不用静默，用它的回显检查命令格式对不对
-  const replies = await agent.chat.capture(async () => bot.chat(`/give ${bot.username} ${kit[0]}`), 1200);
-  if (replies.some((r) => /Unknown|Expected|Invalid|Malformed|未知|错误|无效/i.test(r))) throw new Error(`发装备的命令被服务器拒绝了：${replies.join(' ')}`);
-  for (const line of kit.slice(1)) {
-    agent.adminCommand(`give ${bot.username} ${line}`);
-    await sleep(120);
+  if (free < need) throw new Error(`背包空位不够（要 ${need} 格，现在只有 ${free} 格），先帮我清一清背包吧`);
+  for (const [i, line] of kit.entries()) {
+    if (i === 0) {
+      // 第一条不用静默，用它的回显检查命令格式对不对
+      const replies = await agent.chat.capture(async () => bot.chat(`/give ${bot.username} ${line}`), 1200);
+      if (replies.some((r) => /Unknown|Expected|Invalid|Malformed|未知|错误|无效/i.test(r))) throw new Error(`发装备的命令被服务器拒绝了：${replies.join(' ')}`);
+    } else {
+      agent.adminCommand(`give ${bot.username} ${line}`);
+      await sleep(120);
+    }
+    const dest = wearSlot(line);
+    if (dest) {
+      const temp = await waitForTemp(bot, line.split('[')[0]);
+      if (temp) await bot.equip(temp, dest).catch(() => {});
+    }
   }
-  await sleep(800);
-  await bot.armorManager?.equipAll?.();
-  // 穿上临时盔甲（原来的盔甲会换回背包）
-  for (const [dest, re] of [['head', /_helmet$/], ['torso', /_chestplate$/], ['legs', /_leggings$/], ['feet', /_boots$/]]) {
-    const temp = bot.inventory.items().find((i) => re.test(i.name) && isTemp(i));
-    if (temp) await bot.equip(temp, dest).catch(() => {});
-  }
-  const shield = bot.inventory.items().find((i) => i.name === 'shield' && isTemp(i));
-  if (shield) await bot.equip(shield, 'off-hand').catch(() => {});
+  await sleep(500);
   await equipBestWeapon(bot);
   log.info(`作弊模式：发了 ${kit.length} 样临时装备`);
   return kit.length;

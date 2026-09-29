@@ -1320,7 +1320,7 @@ export const ACTIONS = [
   },
   {
     name: 'duel',
-    description: 'PVP 决斗（娱乐切磋）。action=start 接受或发起决斗（difficulty：easy / normal / hard / cheat 作弊＝临时换一套顶级附魔装备）；surrender 对方认输；stats 查战绩。默认“切磋”规则，打到只剩几颗心就停，不会真打死。',
+    description: 'PVP 决斗（娱乐切磋）。action=start 接受或发起决斗（difficulty：easy / normal / hard / cheat 作弊＝临时换一套顶级附魔装备）；surrender 对方认输；stats 查战绩。所有模式都强制锁 1 滴血：打到只剩 1 滴血就停，谁都不会被打死。',
     input_schema: schema({
       action: choice(['start', 'surrender', 'stats'], '操作'),
       player: str('对手的玩家名'),

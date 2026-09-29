@@ -222,7 +222,7 @@ export function duelDialog(agent) {
     title: { text: 'PVP 决斗', color: 'light_purple' },
     body: [message([
       key('选个难度，倒计时后开打'), br(),
-      { text: lethal ? '现在是真打：打到有一方倒下（困难还会用岩浆桶）' : '切磋：打到只剩几颗心就停，不会真的打死', color: 'yellow' },
+      { text: `打到只剩 1 滴血就停，谁都不会被打死${lethal ? '（真打：困难、作弊还会用岩浆桶）' : ''}`, color: 'yellow' },
     ])],
     actions: ['duel_easy', 'duel_normal', 'duel_hard', 'duel_cheat'].map((id) => menuButton(agent, id)),
     columns: 2,

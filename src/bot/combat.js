@@ -1051,7 +1051,8 @@ export class Fighter {
       bot.setControlState('right', ok && !this.strafeLeft);
     }
     const reach = reachTo(bot, target);
-    const axe = lv.axeBreak && playerBlocking(bot, target) && reach <= lv.reach ? findInv(bot, /_axe$/) : null;
+    if (lv.bare) await this.bareHand();
+    const axe = !lv.bare && lv.axeBreak && playerBlocking(bot, target) && reach <= lv.reach ? findInv(bot, /_axe$/) : null;
     if (axe && Date.now() >= this.nextHitAt - 300) {
       // 换斧子砍一下，对方的盾 5 秒用不了；再换回剑
       this.lower();
@@ -1074,6 +1075,17 @@ export class Fighter {
     } else if (lv.shield && d < 4 && this.nextHitAt - Date.now() > 300) this.raise(target.position.offset(0, 1.4, 0));
     else this.lower();
     await this.wait(80);
+  }
+
+  // 空手（或者拿着不算武器的东西）：决斗收尾用，一拳只有 1 点伤害，不会把人打死
+  async bareHand() {
+    const bot = this.bot;
+    const weapon = (i) => Boolean(i) && /_(sword|axe|pickaxe|shovel|hoe|spear)$|^(trident|mace)$/.test(i.name);
+    if (!weapon(bot.heldItem)) return;
+    const slot = [...Array(9).keys()].find((s) => !weapon(bot.inventory.slots[36 + s]));
+    if (slot != null) bot.setQuickBarSlot(slot);
+    else await bot.unequip('hand').catch(() => {});
+    this.lastSwap = Date.now();
   }
 
   async pvp(target, until) {

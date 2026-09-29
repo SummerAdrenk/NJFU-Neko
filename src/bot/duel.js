@@ -1,4 +1,5 @@
-// PVP 决斗：玩家向猫娘发起对决。默认“切磋”规则——把对方打到只剩几颗心就停手，不会真的打死。
+// PVP 决斗：玩家向猫娘发起对决。所有模式都强制锁 1 滴血——谁先被打到只剩 1 滴血谁输，谁都不会被打死。
+// 装了面板模组 1.0.3+：模组拦住致命伤害、把血量锁在 1（对双方都有效）。没装：对方的血少到她一下可能打死时改用空手打。
 import fs from 'node:fs';
 import path from 'node:path';
 import { makeMovements } from './createBot.js';
@@ -10,6 +11,7 @@ import { RUNTIME } from '../paths.js';
 import { abortError, sleep } from '../util.js';
 
 const STATS_FILE = path.join(RUNTIME, 'duels.json');
+const LOCK_HP = 1;
 const WEAPON_DAMAGE = { netherite_sword: 8, diamond_sword: 7, iron_sword: 6, stone_sword: 5, golden_sword: 4, wooden_sword: 4, netherite_axe: 10, diamond_axe: 9, iron_axe: 9, stone_axe: 9, golden_axe: 7, wooden_axe: 7, mace: 6, trident: 9 };
 const LEVELS = {
   easy: { name: '简单', interval: 1100, strafe: false, crit: false, shield: false, axeBreak: false, lava: false, reach: 2.6 },
@@ -73,6 +75,11 @@ export class Duels {
     const username = p.username;
     return agent.tasks.run('duel', `和 ${username} 决斗（${level.name}）`, async (task) => {
       this.active = { player: username, surrendered: false };
+      // 面板模组的决斗锁血：双方都不会被打死
+      if (agent.serverInfo?.njfuCommands?.includes('duel') && agent.identity.opLevel >= 2) {
+        agent.adminCommand(`njfu duel on ${username} ${bot.username}`);
+        this.active.locked = true;
+      }
       let kit = false;
       try {
         // 作弊难度：发一套临时的顶级附魔装备（本来就在作弊模式就不用再发）；切磋时剑上不带火焰附加
@@ -84,6 +91,12 @@ export class Duels {
         return await this.fightLoop(task, username, level, cfg);
       } finally {
         if (kit) await removeCheatKit(agent).catch(() => {});
+        if (this.active?.locked) agent.adminCommand(`njfu duel off ${username} ${bot.username}`);
+        // 没装模组时她可能真的被打倒：算对方赢
+        if (this.active?.died && !this.active.recorded) {
+          const s = this.record(username, 'win');
+          agent.say(`呜……我被打倒了，${username} 赢了！（战绩 ${s.win} 胜 ${s.lose} 负 ${s.draw} 平）`);
+        }
         this.last = { player: username, endedAt: Date.now() };
         this.active = null;
         if (bot.usingHeldItem) bot.deactivateItem();
@@ -101,12 +114,12 @@ export class Duels {
     const playerHealth = (e) => Number(e?.metadata?.[healthKey] ?? 20);
     const weapon = await equipBestWeapon(bot);
     await bot.armorManager?.equipAll?.();
-    // 最重的一击：武器伤害 + 锋利加成，再按暴击 ×1.5；切磋时对方血量低于这个就停，保证不会一下打死
+    const locked = Boolean(this.active?.locked);
+    // 最重的一击：武器伤害 + 锋利加成，再按暴击 ×1.5。没有模组锁血时，对方的血少于这个就改用空手打（一拳 1 点，打不死）
     const sharp = bot.heldItem?.enchants?.find?.((en) => /sharpness/.test(en.name))?.lvl ?? (level.cheat ? 5 : 0);
     const maxHit = Math.ceil(((WEAPON_DAMAGE[weapon] ?? 1) + (sharp ? 0.5 * sharp + 0.5 : 0)) * 1.5) + 1;
-    const mercy = cfg.lethal ? 0 : Math.max(Number(cfg.mercy_health ?? 6), maxHit);
 
-    say(`${username} 向我发起了决斗！难度：${level.name}，${cfg.lethal ? '真打' : '切磋（打到只剩几颗心就停）'}`);
+    say(`${username} 向我发起了决斗！难度：${level.name}，${cfg.lethal ? '真打' : '切磋'}，打到只剩 1 滴血就停，谁都不会被打死`);
     for (const n of ['3', '2', '1']) {
       await sleep(1000, task.signal);
       say(`${n}…`);
@@ -117,11 +130,13 @@ export class Duels {
     const started = Date.now();
     const fighter = new Fighter(agent, task.signal);
     await fighter.equipShield();
-    // 和平时打玩家用同一套技巧（战斗模块的 pvpStep），难度决定用哪些；岩浆只在“真打”的决斗里用
+    // 和平时打玩家用同一套技巧（战斗模块的 pvpStep），难度决定用哪些；岩浆只在“真打”、而且有模组锁血的决斗里用
     const style = {
       reach: level.reach, interval: level.interval, strafe: level.strafe, crit: level.crit, shield: level.shield,
-      axeBreak: level.axeBreak, lava: level.lava && Boolean(cfg.lethal),
+      axeBreak: level.axeBreak, lava: level.lava && Boolean(cfg.lethal) && locked,
     };
+    // 空手收尾（没有模组锁血时）：不跳劈、不换斧子、不用岩浆
+    const bare = { ...style, bare: true, crit: false, axeBreak: false, lava: false };
     let result = 'draw';
     bot.pathfinder.setMovements(makeMovements(bot));
     for (;;) {
@@ -137,14 +152,14 @@ export class Duels {
         say(`${username} 认输啦！嘿嘿，我赢了喵～`);
         break;
       }
-      if (!cfg.lethal && playerHealth(e) <= mercy) {
+      if (playerHealth(e) <= LOCK_HP) {
         result = 'lose_player';
-        say(`胜负已分！${username} 只剩 ${Math.ceil(playerHealth(e) / 2)} 颗心了，我赢啦喵～`);
+        say(`胜负已分！${username} 只剩 1 滴血了，我赢啦喵～`);
         break;
       }
-      if (bot.health <= Number(cfg.surrender_health ?? 4)) {
+      if (bot.health <= LOCK_HP) {
         result = 'win_player';
-        say(`呜……我打不过了，${username} 赢了！`);
+        say(`呜……我只剩 1 滴血了，${username} 赢了！`);
         break;
       }
       if (Date.now() - started > (cfg.time_limit_seconds ?? 180) * 1000) {
@@ -152,9 +167,10 @@ export class Duels {
         say('时间到！这局平手～');
         break;
       }
-      await fighter.pvpStep(e, style);
+      await fighter.pvpStep(e, !locked && playerHealth(e) <= maxHit ? bare : style);
     }
     bot.clearControlStates();
+    this.active.recorded = true;
 
     const player = username;
     let text;
@@ -169,6 +185,10 @@ export class Duels {
       text = `平局（${player} 战绩 ${s.win} 胜 ${s.lose} 负 ${s.draw} 平）`;
     }
     agent.affection.change(player, 2, '和猫娘决斗', { kind: 'brain', owner: agent.chat.isOwner(player) });
+    // 用过岩浆：身上还在烧，先给双方抗火，免得锁血解除后被烧死
+    if (style.lava && agent.identity.opLevel >= 2) {
+      for (const target of [player, bot.username]) agent.adminCommand(`effect give ${target} minecraft:fire_resistance 10 0 true`);
+    }
     if (cfg.heal_after && agent.identity.opLevel >= 2) {
       for (const target of [player, bot.username]) {
         agent.adminCommand(`effect give ${target} minecraft:instant_health 1 2`);
