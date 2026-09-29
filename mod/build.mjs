@@ -69,6 +69,24 @@ walk(path.join(HERE, 'src'));
 const classes = path.join(BUILD, 'classes');
 fs.mkdirSync(classes, { recursive: true });
 const q = (s) => `"${s.replace(/\\/g, '/')}"`;
+
+// 其他模组 API 的替身（例如一键整理模组的注解）：只参与编译，不打进 jar
+const stubSources = [];
+const walkStubs = (dir) => {
+  if (!fs.existsSync(dir)) return;
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) walkStubs(p);
+    else if (e.name.endsWith('.java')) stubSources.push(p);
+  }
+};
+walkStubs(path.join(HERE, 'stubs'));
+if (stubSources.length) {
+  const stubOut = path.join(BUILD, 'stubs');
+  fs.mkdirSync(stubOut, { recursive: true });
+  execFileSync(tool('javac'), ['--release', '25', '-encoding', 'UTF-8', '-d', stubOut, ...stubSources], { stdio: 'inherit' });
+  classpath.push(stubOut);
+}
 const argfile = path.join(BUILD, 'javac.args');
 fs.writeFileSync(argfile, [
   '--release', '25', '-encoding', 'UTF-8', '-proc:none', '-nowarn', '-d', q(classes),

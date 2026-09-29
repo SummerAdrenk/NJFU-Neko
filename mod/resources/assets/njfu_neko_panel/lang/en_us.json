@@ -2,5 +2,6 @@
   "njfu_neko_panel.title": "%s's Inventory",
   "njfu_neko_panel.health": "Health %s/%s",
   "njfu_neko_panel.armor": "Armor %s",
+  "njfu_neko_panel.food": "Food %s/20 (when opened)",
   "njfu_neko_panel.read_only": "View only"
 }

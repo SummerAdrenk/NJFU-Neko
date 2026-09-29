@@ -12,12 +12,14 @@ import net.minecraft.world.inventory.InventoryMenu;
 import net.minecraft.world.inventory.MenuType;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
+import org.anti_ad.mc.ipn.api.IPNPlayerSideOnly;
 
 /**
  * 猫娘面板。类型用原版的 5 行箱子（GENERIC_9x5），格子顺序和原版箱子完全一致：
  * 0～44 猫娘（见 {@link CompanionContainer}），45～71 自己的背包，72～80 自己的快捷栏。
  * 服务器端和装了模组的客户端都用这个类；坐标按“人物面板”排布（没装模组的客户端用原版箱子的坐标，不影响）。
  */
+@IPNPlayerSideOnly
 public class PanelMenu extends AbstractContainerMenu {
     public static final int BOX = CompanionContainer.SIZE;
     private static final EquipmentSlot[] ARMOR = {EquipmentSlot.HEAD, EquipmentSlot.CHEST, EquipmentSlot.LEGS, EquipmentSlot.FEET};

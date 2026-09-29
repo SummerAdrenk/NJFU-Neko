@@ -24,7 +24,7 @@ import net.minecraft.world.entity.player.Player;
  */
 public final class NekoPanelMod implements ModInitializer {
     public static final String MOD_ID = "njfu_neko_panel";
-    /** 写在界面标题的 insertion 里，装了模组的客户端据此换成人物面板：前缀|实体ID|能否编辑|名字 */
+    /** 写在界面标题的 insertion 里，装了模组的客户端据此换成人物面板：前缀|实体ID|能否编辑|饱食度|名字 */
     public static final String MARKER = "njfu_neko_panel|";
 
     @Override
@@ -64,7 +64,8 @@ public final class NekoPanelMod implements ModInitializer {
     public static void openPanel(ServerPlayer viewer, ServerPlayer companion) {
         boolean editable = PanelConfig.canEdit(viewer);
         String name = PanelConfig.displayName();
-        String marker = MARKER + companion.getId() + "|" + (editable ? 1 : 0) + "|" + name;
+        // 饱食度原版不会发给别的玩家，打开面板时带过去：前缀|实体ID|能否编辑|饱食度|名字
+        String marker = MARKER + companion.getId() + "|" + (editable ? 1 : 0) + "|" + companion.getFoodData().getFoodLevel() + "|" + name;
         Component title = Component.translatableWithFallback("njfu_neko_panel.title", "%s 的背包", name)
             .withStyle(style -> style.withInsertion(marker));
         viewer.openMenu(new SimpleMenuProvider(

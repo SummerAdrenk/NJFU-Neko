@@ -13,7 +13,8 @@
     "ctl": "node src/cli.js",
     "skin": "node scripts/skin-pack.js",
     "test": "node scripts/selftest.js",
-    "build-mod": "node mod/build.mjs"
+    "build-mod": "node mod/build.mjs",
+    "install-mod": "node mod/install.mjs"
   },
   "engines": {
     "node": ">=20"

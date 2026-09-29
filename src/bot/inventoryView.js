@@ -58,13 +58,12 @@ const message = (contents, width = 320) => ({ type: 'minecraft:plain_message', w
 // 顶部：爱心、鸡腿和数值
 function statusHeader(agent) {
   const bot = agent.bot;
-  const parts = [];
-  if (supportsSprites(agent)) {
-    parts.push(...iconRow(agent, bot.health, 'hud/heart/full', 'hud/heart/half', 'hud/heart/container'), { text: '   ' },
-      ...iconRow(agent, bot.food, 'hud/food_full', 'hud/food_half', 'hud/food_empty'), br());
-  }
-  parts.push({ text: `生命 ${Math.round(bot.health)}/20 · 饥饿 ${bot.food}/20 · 经验 ${bot.experience?.level ?? 0} 级`, color: 'gray' });
-  return message(parts);
+  const sep = { text: '   ·   ', color: 'dark_gray' };
+  return message([
+    { text: '生命 ', color: 'white' }, { text: `${Math.round(bot.health)}/20`, color: 'red' }, sep,
+    { text: '饱食度 ', color: 'white' }, { text: `${bot.food}/20`, color: 'gold' }, sep,
+    { text: '经验 ', color: 'white' }, { text: `${bot.experience?.level ?? 0} 级`, color: 'green' },
+  ]);
 }
 
 function button(label, action, tooltip) {
@@ -114,7 +113,7 @@ export function inventoryDialog(agent) {
 export function statusDialog(agent, player) {
   const s = snapshot(agent);
   const love = agent.affection.get(player, agent.chat.isOwner(player));
-  const line = (k, v, color = 'white') => [{ text: `${k}  `, color: 'gray' }, { text: String(v), color }, br()];
+  const line = (k, v, color = 'white') => [{ text: `${k}  `, color: 'white' }, { text: String(v), color }, br()];
   return {
     type: 'minecraft:notice',
     title: { text: `${agent.cfg.identity.display_name} 的状态`, color: 'light_purple' },
@@ -158,7 +157,7 @@ export function menuDialog(agent, player) {
     title: { text: agent.cfg.identity.display_name, color: 'light_purple' },
     body: [
       statusHeader(agent),
-      message([{ text: `对你的好感：${love.score}（${love.level}）`, color: 'light_purple' }, br(), { text: '想让她做什么？', color: 'gray' }]),
+      message([{ text: `对你的好感：${love.score}（${love.level}）`, color: 'light_purple' }, br(), { text: '想让她做什么？', color: 'white' }]),
     ],
     actions,
     columns: 2,

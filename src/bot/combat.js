@@ -1783,6 +1783,16 @@ export function installCombatSense(agent, bot) {
         const shield = bot.inventory.items().find((i) => i.name === 'shield');
         if (shield) await bot.equip(shield, 'off-hand').catch(() => {});
       }
+      // 盔甲格、副手空了（比如被整理模组挪进了背包），背包里有合适的就穿回去
+      if (!agent.fighting && Date.now() - (agent.lastDressCheck ?? 0) > 5000 && !busy()) {
+        agent.lastDressCheck = Date.now();
+        const empty = ['head', 'torso', 'legs', 'feet'].some((d) => !bot.inventory.slots[bot.getEquipmentDestSlot(d)]);
+        if (empty) await bot.armorManager?.equipAll?.();
+        if (!bot.inventory.slots[bot.getEquipmentDestSlot('off-hand')]) {
+          const shield = bot.inventory.items().find((i) => i.name === 'shield');
+          if (shield) await bot.equip(shield, 'off-hand').catch(() => {});
+        }
+      }
       // 盔甲快坏了：身上有同类的就换上，没有就提醒一次
       if (!agent.fighting && Date.now() - (agent.lastArmorCheck ?? 0) > 10_000 && !busy()) {
         agent.lastArmorCheck = Date.now();
