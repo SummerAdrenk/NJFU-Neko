@@ -265,6 +265,18 @@ giftSocial.onItemDrop(giftBot, { id: 1, position: new Vec3(0.6, 65.32, 0.7) });
 giftSocial.onItemDrop(giftBot, { id: 2, position: new Vec3(1.2, 64.1, 0.5) });
 check('礼物：玩家自己丢出的才算，身边怪物掉的东西不算', giftSocial.drops.get(1)?.thrower === 'Steve' && giftSocial.drops.get(2)?.thrower === null);
 
+const { Agent } = await import('../src/agent.js');
+const fakeAgentConn = Object.create(Agent.prototype);
+let opened = 0;
+Object.assign(fakeAgentConn, { stopping: false, connecting: false, botAlive: true, openConnection: async () => { opened += 1; } });
+await fakeAgentConn.connect();
+fakeAgentConn.botAlive = false;
+fakeAgentConn.connecting = true;
+await fakeAgentConn.connect();
+fakeAgentConn.connecting = false;
+await fakeAgentConn.connect();
+check('重连：已经在线或者正在连时不再开第二个连接（多开会把正在用的 ViaProxy 杀掉，自己把自己踢下线）', opened === 1);
+
 const junk = await import('../src/bot/junk.js');
 const junkBot = {
   inventory: {

@@ -266,6 +266,21 @@ export class Agent extends EventEmitter {
   async connect() {
     clearTimeout(this.reconnectTimer);
     if (this.stopping) return;
+    // 已经连着（或者正在连）就不再开第二个连接：多开一个会把正在用的 ViaProxy 当成残留进程杀掉，把自己踢下线，
+    // 被踢的那一下又排一次重连……一直循环（以前服务器关着时排的重连，开服后还会到点再连一次，就是这样引起的）
+    if (this.connecting || this.botAlive) {
+      log.debug('已经在线或者正在连接，跳过这次重连');
+      return;
+    }
+    this.connecting = true;
+    try {
+      await this.openConnection();
+    } finally {
+      this.connecting = false;
+    }
+  }
+
+  async openConnection() {
     const { host, port } = this.cfg.server;
     this.events.push('connection', { state: 'connecting', server: `${host}:${port}` });
     let target;
@@ -282,6 +297,7 @@ export class Agent extends EventEmitter {
 
     const bot = createBot(this.cfg, target);
     this.bot = bot;
+    this.botAlive = true;
     if (this.cfg.compat.fabric_handshake) {
       installFabricHandshake(bot._client, (detail) => {
         log.info(detail);
@@ -326,6 +342,9 @@ export class Agent extends EventEmitter {
       this.events.push('connection', { state: 'error', detail: describeNetError(err) });
     });
     bot.once('end', (reason) => this.onEnd(bot, reason, spawned));
+    bot.once('end', () => {
+      if (this.bot === bot) this.botAlive = false;
+    });
   }
 
   onSpawn(bot) {
@@ -357,6 +376,7 @@ export class Agent extends EventEmitter {
 
   scheduleReconnect(wasOnline) {
     if (this.stopping || !this.cfg.behavior.reconnect) return;
+    clearTimeout(this.reconnectTimer); // 同一时间只留一个重连计时器
     const delay = wasOnline ? this.baseDelay : this.retryDelay;
     this.retryDelay = Math.min(this.retryDelay * 2, 120_000);
     log.info(`${Math.round(delay / 1000)} 秒后重新连接…`);
@@ -370,6 +390,7 @@ export class Agent extends EventEmitter {
     if (this.bot) {
       const old = this.bot;
       this.bot = null;
+      this.botAlive = false;
       this.online = false;
       try {
         old.quit('重新连接');
