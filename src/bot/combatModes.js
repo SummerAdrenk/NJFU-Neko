@@ -51,8 +51,7 @@ const TEMP = 'custom_data={neko_temp:1b}';
 const TIERS = { 下界合金: 'netherite', 钻石: 'diamond', netherite: 'netherite', diamond: 'diamond' };
 const ench = (map) => `enchantments={${Object.entries(map).map(([k, v]) => `"minecraft:${k}":${v}`).join(',')}}`;
 
-// duel：决斗用，只发盔甲、剑、斧、盾；fire：剑上要不要火焰附加（决斗切磋时不要，免得打完了对方还在烧）
-export function cheatKit(tier, { gapples = 4, totems = 2, potions = true, elytra = false, duel = false, fire = true } = {}) {
+export function cheatKit(tier, { gapples = 4, totems = 2, potions = true, elytra = false } = {}) {
   const t = TIERS[tier] ?? 'netherite';
   const armor = { protection: 4, unbreaking: 3, mending: 1 };
   const gear = [
@@ -60,13 +59,12 @@ export function cheatKit(tier, { gapples = 4, totems = 2, potions = true, elytra
     [`${t}_chestplate`, armor, 1],
     [`${t}_leggings`, { ...armor, swift_sneak: 3 }, 1],
     [`${t}_boots`, { ...armor, feather_falling: 4, depth_strider: 3 }, 1],
-    [`${t}_sword`, { sharpness: 5, looting: 3, ...(fire ? { fire_aspect: 2 } : {}), sweeping_edge: 3, unbreaking: 3, mending: 1 }, 1],
+    [`${t}_sword`, { sharpness: 5, looting: 3, fire_aspect: 2, sweeping_edge: 3, unbreaking: 3, mending: 1 }, 1],
     [`${t}_axe`, { sharpness: 5, efficiency: 5, unbreaking: 3, mending: 1 }, 1],
-    ...(duel ? [] : [['bow', { power: 5, punch: 1, flame: 1, infinity: 1, unbreaking: 3 }, 1]]),
+    ['bow', { power: 5, punch: 1, flame: 1, infinity: 1, unbreaking: 3 }, 1],
     ['shield', { unbreaking: 3, mending: 1 }, 1],
   ];
   const kit = gear.map(([item, e, n]) => `${item}[${ench(e)},${TEMP}] ${n}`);
-  if (duel) return kit;
   kit.push(`arrow[${TEMP}] 64`, `ender_pearl[${TEMP}] 16`, `golden_apple[${TEMP}] 16`, `cooked_beef[${TEMP}] 32`, `oak_boat[${TEMP}] 1`, `water_bucket[${TEMP}] 1`,
     `lava_bucket[${TEMP}] 1`, `cobblestone[${TEMP}] 64`);
   if (gapples > 0) kit.push(`enchanted_golden_apple[${TEMP}] ${gapples}`);
@@ -100,10 +98,18 @@ async function waitForTemp(bot, name, ms = 1500) {
 export async function giveCheatKit(agent, opts = {}) {
   const bot = agent.bot;
   if (agent.identity.opLevel < 2) throw new Error('作弊装备要管理员权限（/give）');
-  const free = bot.inventory.emptySlotCount();
   const kit = cheatKit(opts.tier ?? agent.cfg.combat?.cheat_tier, opts);
-  const need = kitSlotsNeeded(kit);
   agent.cheatBuckets ??= bucketCount(bot);
+  await giveKitLines(agent, kit);
+  log.info(`作弊模式：发了 ${kit.length} 样临时装备`);
+  return kit.length;
+}
+
+// 给自己发一组“物品[组件] 数量”：盔甲、盾牌发一件穿一件（换下来的正好放进腾出来的格子），只有其他东西要占空位
+export async function giveKitLines(agent, kit) {
+  const bot = agent.bot;
+  const need = kitSlotsNeeded(kit);
+  const free = bot.inventory.emptySlotCount();
   if (free < need) throw new Error(`背包空位不够（要 ${need} 格，现在只有 ${free} 格），先帮我清一清背包吧`);
   for (const [i, line] of kit.entries()) {
     if (i === 0) {
@@ -122,8 +128,6 @@ export async function giveCheatKit(agent, opts = {}) {
   }
   await sleep(500);
   await equipBestWeapon(bot);
-  log.info(`作弊模式：发了 ${kit.length} 样临时装备`);
-  return kit.length;
 }
 
 export function isTemp(item) {

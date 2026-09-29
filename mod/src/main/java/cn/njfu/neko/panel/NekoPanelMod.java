@@ -3,13 +3,11 @@ package cn.njfu.neko.panel;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
-import java.util.Map;
-import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.entity.event.v1.ServerLivingEntityEvents;
 import net.fabricmc.fabric.api.event.player.UseEntityCallback;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
 import net.minecraft.commands.arguments.EntityArgument;
@@ -18,7 +16,6 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.InteractionResult;
 import net.minecraft.world.SimpleMenuProvider;
-import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
 
 /**
@@ -29,21 +26,22 @@ import net.minecraft.world.entity.player.Player;
  *   <li>Shift + 右键：通知猫娘打开功能菜单。</li>
  *   <li>/njfu quiet &lt;命令&gt;：只有猫娘自己能用，执行命令时不在管理员聊天栏里留下灰色提示。</li>
  *   <li>/njfu ui &lt;动作&gt;：功能菜单的按钮用，谁都能用。panel 打开她的人物面板，其他动作转告猫娘去做。</li>
- *   <li>/njfu duel on|off &lt;玩家&gt;：决斗锁 1 滴血（只有猫娘自己能用）。决斗中的人受到致命伤害时不会死，血量锁在 1。</li>
+ *   <li>/njfu duel on|off &lt;玩家&gt;：决斗锁 1 滴血、附近的爆炸不破坏方块（只有猫娘自己能用，见 {@link DuelArena}）。</li>
+ *   <li>/njfu stash save|restore &lt;玩家&gt;：决斗前替玩家保管整个背包（存进存档目录），打完原样放回（只有猫娘自己能用）。</li>
  * </ul>
  */
 public final class NekoPanelMod implements ModInitializer {
     public static final String MOD_ID = "njfu_neko_panel";
     /** 写在界面标题的 insertion 里，装了模组的客户端据此换成人物面板：前缀|实体ID|能否编辑|饱食度|名字 */
     public static final String MARKER = "njfu_neko_panel|";
-    /** 决斗中的玩家 → 保护到期时间（最多 10 分钟：猫娘程序中途断了，也不会一直死不了）。 */
-    private static final Map<UUID, Long> DUELISTS = new ConcurrentHashMap<>();
 
     @Override
     public void onInitialize() {
         PanelConfig.load();
-        // 决斗锁血：决斗中的人受到致命伤害时取消死亡、血量锁在 1（这局就分出胜负了）
-        ServerLivingEntityEvents.ALLOW_DEATH.register((entity, source, amount) -> allowDeath(entity));
+        // 决斗锁血：决斗中的人受到致命伤害时取消死亡、血量锁在 1（有图腾时让图腾触发）
+        ServerLivingEntityEvents.ALLOW_DEATH.register((entity, source, amount) -> DuelArena.allowDeath(entity));
+        // 上次决斗没来得及放回的背包（游戏中途关了）：进游戏时放回
+        ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> DuelArena.onJoin(server, handler.getPlayer()));
         UseEntityCallback.EVENT.register((player, level, hand, entity, hit) -> {
             if (hand != InteractionHand.MAIN_HAND || !(entity instanceof Player target) || !PanelConfig.isCompanion(target)) {
                 return InteractionResult.PASS;
@@ -69,10 +67,14 @@ public final class NekoPanelMod implements ModInitializer {
                         quiet.getServer().getCommands().performPrefixedCommand(quiet, command);
                         return 1;
                     })))
-                // 决斗锁血（只有猫娘自己能用）：on 之后这些玩家不会被打死，off 或 10 分钟后解除
+                // 决斗锁血、保护场地（只有猫娘自己能用）：on 之后这些玩家不会被打死，off 或 10 分钟后解除
                 .then(Commands.literal("duel").requires(NekoPanelMod::isCompanionSource)
                     .then(Commands.literal("on").then(Commands.argument("players", EntityArgument.players()).executes(ctx -> duelLock(ctx, true))))
                     .then(Commands.literal("off").then(Commands.argument("players", EntityArgument.players()).executes(ctx -> duelLock(ctx, false)))))
+                // 保管背包（只有猫娘自己能用）：结果只发给猫娘自己（[NJFU-STASH] 结果 玩家名），她据此决定能不能穿临时装备
+                .then(Commands.literal("stash").requires(NekoPanelMod::isCompanionSource)
+                    .then(Commands.literal("save").then(Commands.argument("players", EntityArgument.players()).executes(ctx -> stash(ctx, true))))
+                    .then(Commands.literal("restore").then(Commands.argument("players", EntityArgument.players()).executes(ctx -> stash(ctx, false)))))
                 // 功能菜单的按钮（谁都能用）：对话框按钮只能执行命令、不能替玩家发聊天，所以由这里转告猫娘
                 .then(Commands.literal("ui")
                     .then(Commands.argument("action", StringArgumentType.word())
@@ -85,26 +87,24 @@ public final class NekoPanelMod implements ModInitializer {
     }
 
     private static int duelLock(CommandContext<CommandSourceStack> ctx, boolean on) throws CommandSyntaxException {
-        long until = System.currentTimeMillis() + 10 * 60_000L;
         int n = 0;
         for (ServerPlayer p : EntityArgument.getPlayers(ctx, "players")) {
-            if (on) DUELISTS.put(p.getUUID(), until);
-            else DUELISTS.remove(p.getUUID());
+            DuelArena.lock(p, on);
             n++;
         }
         return n;
     }
 
-    private static boolean allowDeath(LivingEntity entity) {
-        if (!(entity instanceof ServerPlayer p)) return true;
-        Long until = DUELISTS.get(p.getUUID());
-        if (until == null) return true;
-        if (until < System.currentTimeMillis()) {
-            DUELISTS.remove(p.getUUID());
-            return true;
+    private static int stash(CommandContext<CommandSourceStack> ctx, boolean save) throws CommandSyntaxException {
+        CommandSourceStack source = ctx.getSource();
+        ServerPlayer self = source.getPlayer();
+        int n = 0;
+        for (ServerPlayer p : EntityArgument.getPlayers(ctx, "players")) {
+            String r = save ? DuelArena.save(source.getServer(), p) : DuelArena.restore(source.getServer(), p);
+            if (self != null) self.sendSystemMessage(Component.literal("[NJFU-STASH] " + r + " " + p.getName().getString()));
+            if (r.equals("saved") || r.equals("restored")) n++;
         }
-        p.setHealth(1.0F);
-        return false;
+        return n;
     }
 
     /** 菜单按钮：panel 在她身边时直接打开人物面板（离得远就让她弹背包窗口）；其他动作转告离自己最近的猫娘去做。 */

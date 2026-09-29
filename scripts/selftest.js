@@ -139,8 +139,27 @@ check('菜单 非主人没有主人专用按钮', !JSON.stringify(guestMenu).inc
 check('菜单 坐着时换成站起来', JSON.stringify(view.menuDialog({ ...fakeAgent, seated: true }, 'Steve')).includes('#起来'));
 check('菜单 按钮都对应快捷命令', Object.values(view.MENU_ACTIONS).every((a) => a.text.startsWith('#') && a.label && a.tip));
 const duelBtn = modMenu.actions.find((a) => a.label === 'PVP 决斗');
-check('菜单 决斗先选难度（含作弊）', duelBtn?.action.type === 'show_dialog' && duelBtn.action.dialog.actions.length === 4
-  && duelBtn.action.dialog.actions.some((a) => a.action.command === '/njfu ui duel_cheat'));
+const duelTop = duelBtn?.action.dialog;
+const cheatTier = duelTop?.actions.find((a) => a.label === '作弊 ▸')?.action.dialog;
+check('菜单 决斗两层：简单 普通 困难▸ 作弊▸', duelBtn?.action.type === 'show_dialog' && duelTop.actions.length === 4
+  && duelTop.actions.some((a) => a.action.command === '/njfu ui duel_easy'));
+check('菜单 作弊档Ⅰ～Ⅵ', cheatTier?.actions.length === 6 && cheatTier.actions.some((a) => a.action.command === '/njfu ui duel_cheat6')
+  && cheatTier.exit_action.action?.command === '/njfu ui duel_menu');
+const kits = await import('../src/bot/duelKits.js');
+const kitIds = (id, o) => kits.duelKit(kits.duelLevel(id), o).map((k) => k.id);
+check('决斗 十四档难度', kits.DUEL_LEVELS.length === 14 && kits.DUEL_LEVELS.filter((l) => l.group === 'cheat').length === 6);
+check('决斗 简单：铁套+铁剑', kitIds('easy').join(',') === 'iron_helmet,iron_chestplate,iron_leggings,iron_boots,iron_sword');
+check('决斗 普通：加铁斧、盾牌', ['iron_axe', 'shield'].every((i) => kitIds('normal').includes(i)));
+check('决斗 困难：钻石、弓箭、蜘蛛网、鞘翅烟花', ['diamond_sword', 'bow', 'arrow', 'cobweb', 'elytra', 'firework_rocket'].every((i) => kitIds('hard').includes(i)) && !kitIds('hard').includes('ender_pearl'));
+check('决斗 困难Ⅵ：金苹果×64、图腾×3、药水', kits.duelKit(kits.duelLevel('hard6')).some((k) => k.item.startsWith('enchanted_golden_apple[') && k.item.endsWith(' 64'))
+  && kits.duelKit(kits.duelLevel('hard6')).some((k) => k.item.startsWith('totem_of_undying[') && k.item.endsWith(' 3')) && kitIds('hard6').includes('splash_potion'));
+check('决斗 作弊：下界合金、珍珠、药水箭、无限弓', ['netherite_sword', 'ender_pearl', 'tipped_arrow', 'water_bucket', 'lava_bucket'].every((i) => kitIds('cheat').includes(i))
+  && kits.duelKit(kits.duelLevel('cheat')).find((k) => k.id === 'bow').item.includes('infinity') && !kitIds('cheat').includes('enchanted_golden_apple'));
+check('决斗 作弊Ⅵ：水晶、黑曜石、TNT、打火石', ['end_crystal', 'obsidian', 'tnt', 'flint_and_steel'].every((i) => kitIds('cheat6').includes(i)));
+check('决斗 顶级附魔（没锁血时不带火焰附加）', kits.duelKit(kits.duelLevel('hard4')).find((k) => k.id === 'diamond_sword').item.includes('sharpness')
+  && !kits.duelKit(kits.duelLevel('hard4'), { fire: false }).find((k) => k.id === 'diamond_sword').item.includes('fire_aspect'));
+check('决斗 难度名', ['困难Ⅲ', '困难3', '困难 III', 'hard3'].every((t) => kits.parseDuelLevel(t.replace(' ', ''))?.id === 'hard3') && kits.parseDuelLevel('作弊')?.id === 'cheat'
+  && kits.parseDuelLevel('普通2') === null);
 const armorBot = {
   inventory: { slots: { 5: { name: 'diamond_helmet' }, 6: { name: 'diamond_chestplate' }, 7: { name: 'diamond_leggings' }, 8: { name: 'diamond_boots' } } },
   getEquipmentDestSlot: (d) => ({ head: 5, torso: 6, legs: 7, feet: 8 })[d],
@@ -168,10 +187,7 @@ check('岩浆 不烫不怕火的、末影人、女巫', !combat.canBurn(fakeBot,
 check('岩浆 已经在烧的不再烫', fireIdx >= 0 && !combat.canBurn(fakeBot, ent('zombie', { metadata: Object.assign([], { [fireIdx]: 1 }) })));
 check('模式 开关能关掉', !flagsFor('极限', { lava: false }).lava);
 check('模式 作弊', flagsFor('作弊').cheat === true && flagsFor('cheat').mode === '作弊');
-const duelKit = modes.cheatKit('钻石', { duel: true, fire: false }).join(' ');
-check('决斗 作弊装备：只有盔甲武器盾，切磋时不带火焰附加', duelKit.includes('diamond_sword') && duelKit.includes('shield')
-  && !duelKit.includes('fire_aspect') && !duelKit.includes('golden_apple') && !duelKit.includes('bow['));
-check('作弊装备 盔甲盾牌发一件穿一件（决斗只要 3 格空位）', modes.kitSlotsNeeded(modes.cheatKit('钻石', { duel: true })) === 3);
+check('作弊装备 盔甲盾牌发一件穿一件（不占空位）', modes.kitSlotsNeeded(['diamond_helmet[x] 1', 'shield[x] 1', 'diamond_sword[x] 1']) === 2);
 check('药水 亡灵用治疗', potionsMod.offensiveKindsFor({ name: 'zombie' }).includes('healing') && !potionsMod.offensiveKindsFor({ name: 'zombie' }).includes('harming'));
 check('药水 普通怪用伤害', potionsMod.offensiveKindsFor({ name: 'spider' }).includes('harming'));
 const ps = ballistics.solveBallistic(new Vec3(0, 65.5, 0), new Vec3(4, 64, 0), ballistics.SPLASH_POTION);

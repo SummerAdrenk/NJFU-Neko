@@ -16,6 +16,7 @@ import { describeStatus } from './status.js';
 import { eatBest } from './survival.js';
 import { accompanyLoop } from './companion.js';
 import { buildBlocks, inspectArea, parseBlockSpec } from './build.js';
+import { DUEL_LEVELS } from './duelKits.js';
 import { describeSchematic, findSchematic, forEachBlock, listSchematics, loadLitematic } from './schematic.js';
 import { blockInfo, craftingPlan, describePlan, foodInfo, howToObtain, mobInfo, mustCollectManually } from '../knowledge/mcKnowledge.js';
 import { wikiLookup } from '../knowledge/wiki.js';
@@ -1320,11 +1321,11 @@ export const ACTIONS = [
   },
   {
     name: 'duel',
-    description: 'PVP 决斗（娱乐切磋）。action=start 接受或发起决斗（difficulty：easy / normal / hard / cheat 作弊＝临时换一套顶级附魔装备）；surrender 对方认输；stats 查战绩。所有模式都强制锁 1 滴血：打到只剩 1 滴血就停，谁都不会被打死。',
+    description: 'PVP 决斗（娱乐切磋）。action=start 接受或发起决斗（difficulty：easy 简单、normal 普通、hard～hard6 困难Ⅰ～Ⅵ、cheat～cheat6 作弊Ⅰ～Ⅵ，装备一级比一级强，都是临时的）；surrender 对方认输；stats 查战绩。所有难度都强制锁 1 滴血，谁都不会被打死。',
     input_schema: schema({
       action: choice(['start', 'surrender', 'stats'], '操作'),
       player: str('对手的玩家名'),
-      difficulty: choice(['easy', 'normal', 'hard', 'cheat'], '难度，可不填'),
+      difficulty: choice(DUEL_LEVELS.map((l) => l.id), '难度，可不填'),
     }, ['action', 'player']),
     run: async (agent, { action, player, difficulty }, ctx) => {
       if (action === 'stats') return agent.duels.statsText(String(player));

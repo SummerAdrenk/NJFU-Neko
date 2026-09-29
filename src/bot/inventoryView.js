@@ -4,6 +4,7 @@
 import { itemKey, modernText } from './ui.js';
 import { snapshot } from './status.js';
 import { combatFlags } from './combatModes.js';
+import { DUEL_LEVELS } from './duelKits.js';
 import { getLog } from '../log.js';
 
 const log = getLog('界面');
@@ -195,38 +196,71 @@ export const MENU_ACTIONS = {
   home: { label: '回家', text: '#回家', tip: '回到她的床边', owner: true },
   sit: { label: '坐下', text: '#坐下', tip: '原地坐下，陪在这里' },
   stand: { label: '站起来', text: '#起来', tip: '站起来' },
-  duel_easy: { label: '简单', text: '#决斗 简单', tip: '不走位、不跳劈、不举盾，出手慢' },
-  duel_normal: { label: '普通', text: '#决斗 普通', tip: '左右走位、举盾，会用斧子破你的盾；不跳劈' },
-  duel_hard: { label: '困难', text: '#决斗 困难', tip: '走位、跳劈暴击、举盾、斧子破盾' },
-  duel_cheat: { label: '作弊', text: '#决斗 作弊', tip: '困难的打法，再临时换上一套顶级附魔装备（打完收回）' },
   pet: { label: '摸摸头', text: '#摸头', tip: '摸摸她的头，好感 +1' },
   hug: { label: '抱抱', text: '#抱抱', tip: '她会跑过来抱你，好感 +1' },
   dance: { label: '跳支舞', text: '#跳舞', tip: '转圈、蹦跳、冒爱心' },
 };
 
+// 决斗难度的按钮：duel_<难度 id>（面板模组 /njfu ui duel_hard3 → 当成玩家发了 #决斗 困难Ⅲ）
+for (const l of DUEL_LEVELS) MENU_ACTIONS[`duel_${l.id}`] = { label: l.name, text: `#决斗 ${l.name}`, tip: l.summary };
+
 const button = (label, action, tooltip, width = 100) => ({ label, ...(tooltip ? { tooltip } : {}), action, width });
 
 // 菜单按钮的动作：装了面板模组 1.0.2+ 用 /njfu ui 转告（点一下就生效）；没装就私聊快捷命令（原版会先弹确认窗口）
-function menuButton(agent, id) {
+function menuButton(agent, id, label = MENU_ACTIONS[id].label) {
   const a = MENU_ACTIONS[id];
-  if (agent.menuButtons) return button(a.label, { type: 'run_command', command: `/njfu ui ${id}` }, a.tip);
-  return button(a.label, { type: 'run_command', command: `/tell ${agent.bot.username} ${a.text}` },
+  if (agent.menuButtons) return button(label, { type: 'run_command', command: `/njfu ui ${id}` }, a.tip);
+  return button(label, { type: 'run_command', command: `/tell ${agent.bot.username} ${a.text}` },
     `${a.tip}（没装面板模组：点完在确认窗口里选「复制到聊天屏幕」，再按回车）`);
 }
 
-// PVP 决斗：先选难度
+// PVP 决斗第一层：简单 / 普通 / 困难▸ / 作弊▸（困难、作弊点进去再选Ⅰ～Ⅵ）
 export function duelDialog(agent) {
-  const lethal = Boolean(agent.cfg.duel?.lethal);
   return {
     type: 'minecraft:multi_action',
     title: { text: 'PVP 决斗', color: 'light_purple' },
     body: [message([
-      key('选个难度，倒计时后开打'), br(),
-      { text: `打到只剩 1 滴血就停，谁都不会被打死${lethal ? '（真打：困难、作弊还会用岩浆桶）' : ''}`, color: 'yellow' },
+      key('选个难度，倒计时后开打（鼠标放在按钮上看装备）'), br(),
+      { text: '所有难度锁 1 滴血，谁都不会被打死；装备都是临时的，打完收回', color: 'yellow' }, br(),
+      key('开打前会问你要不要也穿一套一样的'),
     ])],
-    actions: ['duel_easy', 'duel_normal', 'duel_hard', 'duel_cheat'].map((id) => menuButton(agent, id)),
+    actions: [
+      menuButton(agent, 'duel_easy'),
+      menuButton(agent, 'duel_normal'),
+      button('困难 ▸', { type: 'show_dialog', dialog: duelTierDialog(agent, 'hard') }, '钻石套起步，Ⅰ～Ⅵ 一级比一级强'),
+      button('作弊 ▸', { type: 'show_dialog', dialog: duelTierDialog(agent, 'cheat') }, '下界合金套起步，Ⅰ～Ⅵ 一级比一级强'),
+    ],
     columns: 2,
     exit_action: { label: '算了', width: 150 },
+    pause: false,
+  };
+}
+
+// 困难 / 作弊的等级：上面一排是这一档的装备图标（悬停看名字），下面每级一行写着比上一级多了什么
+export function duelTierDialog(agent, group) {
+  const levels = DUEL_LEVELS.filter((l) => l.group === group);
+  const base = levels[0];
+  const gear = [];
+  if (supportsSprites(agent)) {
+    const m = base.material;
+    const ids = [`${m}_helmet`, `${m}_chestplate`, `${m}_leggings`, `${m}_boots`, `${m}_sword`, `${m}_axe`, 'bow', 'shield', 'cobweb', 'elytra', 'firework_rocket',
+      ...(base.fluids ? ['water_bucket', 'lava_bucket'] : []), ...(base.potions ? ['splash_potion'] : []), ...(base.pearls ? ['ender_pearl'] : [])];
+    for (const id of ids) {
+      const s = agent.textures.itemSprite(id, id);
+      if (s) gear.push({ ...s, ...hoverItem(agent, { name: id, count: 1 }) });
+    }
+    gear.push(br());
+  }
+  const lines = levels.flatMap((l, i) => [{ text: `${l.roman}  `, color: 'gold' }, { text: l.desc, color: i === 0 ? 'white' : 'aqua' }, br()]);
+  return {
+    type: 'minecraft:multi_action',
+    title: { text: `PVP 决斗 · ${base.groupName}`, color: 'light_purple' },
+    body: [message([...gear, ...lines], 360)],
+    actions: levels.map((l) => menuButton(agent, `duel_${l.id}`, l.name)),
+    columns: 3,
+    exit_action: agent.menuButtons
+      ? { label: '返回', width: 150, action: { type: 'run_command', command: '/njfu ui duel_menu' } }
+      : { label: '关闭', width: 150 },
     pause: false,
   };
 }

@@ -44,27 +44,27 @@ export function cooldownMs(item) {
 
 const isSword = (item) => /_sword$/.test(item?.name ?? '');
 export const isMeleeWeapon = (item) => /_(sword|axe|spear)$|^(mace|trident)$/.test(item?.name ?? '');
-const eye = (bot) => bot.entity.position.offset(0, bot.entity.eyeHeight ?? 1.62, 0);
-const flat = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
+export const eye = (bot) => bot.entity.position.offset(0, bot.entity.eyeHeight ?? 1.62, 0);
+export const flat = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
 const healthOf = (bot, e) => {
   const h = meta(bot, e, 'health');
   return typeof h === 'number' ? h : null;
 };
 const alive = (bot, e) => Boolean(e) && e.isValid !== false && (healthOf(bot, e) ?? 1) > 0;
-const findInv = (bot, re) => bot.inventory.items().find((i) => re.test(i.name));
+export const findInv = (bot, re) => bot.inventory.items().find((i) => re.test(i.name));
 const hasArrows = (bot) => Boolean(findInv(bot, /^(arrow|spectral_arrow|tipped_arrow)$/));
 export const hasBow = (bot) => Boolean(findInv(bot, /^bow$/)) && hasArrows(bot);
 const boatItem = (bot) => findInv(bot, /_(boat|raft)$/);
 const inNether = (bot) => /nether/.test(String(bot.game?.dimension ?? ''));
 const centroid = (list) => list.reduce((acc, e) => acc.plus(e.position), new Vec3(0, 0, 0)).scaled(1 / list.length);
 
-function bbox(e) {
+export function bbox(e) {
   const w = (e.width ?? 0.6) / 2;
   const h = e.height ?? 1.8;
   const p = e.position;
   return { minX: p.x - w, maxX: p.x + w, minY: p.y, maxY: p.y + h, minZ: p.z - w, maxZ: p.z + w };
 }
-const overlaps = (a, b) => a.minX < b.maxX && a.maxX > b.minX && a.minY < b.maxY && a.maxY > b.minY && a.minZ < b.maxZ && a.maxZ > b.minZ;
+export const overlaps = (a, b) => a.minX < b.maxX && a.maxX > b.minX && a.minY < b.maxY && a.maxY > b.minY && a.minZ < b.maxZ && a.maxZ > b.minZ;
 
 // 眼睛到目标碰撞箱最近点的距离（原版近战距离 3 格就是这么算的）。
 export function reachTo(bot, e) {
@@ -76,7 +76,7 @@ export function reachTo(bot, e) {
   return Math.hypot(o.x - cx, o.y - cy, o.z - cz);
 }
 
-function towardUnit(from, to) {
+export function towardUnit(from, to) {
   const dx = to.x - from.x;
   const dz = to.z - from.z;
   const n = Math.hypot(dx, dz) || 1;
@@ -330,7 +330,7 @@ export async function retreatFromCrowd(agent, signal, ms = 9000) {
 }
 
 // 扔末影珍珠逃到 dir 方向 12～20 格外的一块安全地面上。成功传送返回 true。
-async function pearlAway(agent, pearl, dir, signal) {
+export async function pearlAway(agent, pearl, dir, signal) {
   const bot = agent.bot;
   const me = bot.entity.position;
   for (const dist of [18, 15, 12]) {
@@ -439,7 +439,7 @@ const DANGER = /lava|fire|magma_block|cactus|sweet_berry_bush|campfire|powder_sn
 const LAVA_UNSAFE = /log|planks|wool|leaves|carpet|hay_block|bookshelf|_wood$|fence|stairs|door|scaffolding|vine|tnt|_bed$|banner|sign|lectern|composter|beehive|bee_nest|target|kelp_block|crafting_table|chest|barrel|campfire|loom|water|bubble_column/;
 // 岩浆能直接倒进去的格子：空气，或者会被冲掉的草
 const LAVA_REPLACEABLE = /^(air|cave_air|short_grass|grass|fern|dead_bush|snow)$/;
-const solid = (b) => b && b.boundingBox === 'block';
+export const solid = (b) => b && b.boundingBox === 'block';
 
 export function safeStep(bot, dir) {
   const p = bot.entity.position.plus(dir.scaled(0.9));
@@ -536,7 +536,7 @@ function bestFood(bot) {
     .sort((a, b) => (foods[b.name].foodPoints + foods[b.name].saturation) - (foods[a.name].foodPoints + foods[a.name].saturation))[0] ?? null;
 }
 
-async function holdItem(bot, item) {
+export async function holdItem(bot, item) {
   if (bot.heldItem?.type === item.type) return;
   const hotbar = bot.inventory.slots.slice(36, 45).findIndex((s) => s?.type === item.type);
   if (hotbar >= 0) bot.setQuickBarSlot(hotbar);

@@ -1,0 +1,10 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "cn.njfu.neko.panel.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": ["ServerExplosionMixin"],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

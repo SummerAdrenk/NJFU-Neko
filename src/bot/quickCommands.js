@@ -8,6 +8,11 @@ import { findSetting, parseValue, resetOverrides, saveOverride, SETTINGS, settin
 import { STATUS } from '../requests.js';
 import { loadConfig } from '../config.js';
 import { combatFlags, giveCheatKit, MODE_DESC, MODE_NAMES, normalizeMode, removeCheatKit } from './combatModes.js';
+import { DUEL_LEVELS, duelLevel, parseDuelLevel } from './duelKits.js';
+
+// 决斗难度的按钮：点一下填进聊天框；悬停看这一档的全部装备
+const duelPick = (l, text = l.name) => ({ text: `[${text}]`, color: 'aqua', suggest: `#决斗 ${l.name}`, hover: `${l.name}：${l.summary}\n（点击填入聊天框，再按回车）` });
+const duelRow = (group) => DUEL_LEVELS.filter((l) => l.group === group).flatMap((l) => [duelPick(l, l.roman), { text: ' ' }]);
 
 const ask = (text) => ({ text, color: 'white', suggest: text, hover: '点击填入聊天框，改一改再发送' });
 const topic = (name) => ({ text: `[${name}]`, color: 'gold', suggest: name === '决斗' ? '#帮助 决斗' : `#${name}`, hover: `查看「${name}」的说明` });
@@ -39,8 +44,9 @@ const HELP = {
   ],
   决斗: [
     title('PVP 决斗'),
-    [cmd('#决斗', '先选难度'), gap, cmd('#决斗 简单'), gap, cmd('#决斗 普通'), gap, cmd('#决斗 困难', '我会走位、跳劈、用盾'), gap, cmd('#决斗 作弊', '我临时换上顶级附魔装备')],
+    [cmd('#决斗', '先选难度'), label('：简单、普通、困难Ⅰ～Ⅵ、作弊Ⅰ～Ⅵ，一级比一级强（鼠标放上去看装备）')],
     [label('倒计时后开打，'), value('强制锁 1 滴血', 'yellow'), label('：打到只剩 1 滴血就停，谁都不会被打死')],
+    [label('装备都是临时的，打完收回；开打前会问你要不要也穿一套一样的')],
     [cmd('#认输'), gap, cmd('#战绩', '你对我的胜负记录')],
   ],
   战斗: [
@@ -348,16 +354,17 @@ export function createQuickCommands(agent) {
         if (!args.length) {
           return {
             panel: [
-              title('PVP 决斗：选个难度（点一下，再按回车）'),
-              [cmd('#决斗 简单', '不走位、不跳劈、不举盾，出手慢'), gap, cmd('#决斗 普通', '左右走位、举盾，会用斧子破你的盾'), gap,
-                cmd('#决斗 困难', '走位、跳劈暴击、举盾、斧子破盾'), gap, cmd('#决斗 作弊', '困难的打法，再临时换上一套顶级附魔装备（打完收回）')],
-              [label('打到只剩 1 滴血就停，谁都不会被打死。'), cmd('#认输'), label(' 随时认输，'), cmd('#战绩'), label(' 看胜负')],
+              title('PVP 决斗：选个难度（点一下再按回车，鼠标放上去看装备）'),
+              [duelPick(duelLevel('easy')), { text: ' ' }, duelPick(duelLevel('normal'))],
+              [label('困难 '), ...duelRow('hard')],
+              [label('作弊 '), ...duelRow('cheat')],
+              [label('所有难度锁 1 滴血，装备都是临时的，打完收回。'), cmd('#认输'), label(' '), cmd('#战绩')],
             ],
           };
         }
-        const level = { 简单: 'easy', 普通: 'normal', 困难: 'hard', 作弊: 'cheat', easy: 'easy', normal: 'normal', hard: 'hard', cheat: 'cheat' }[args[0]];
-        if (!level) return ['难度只有：简单、普通、困难、作弊（比如 #决斗 困难）'];
-        const r = await act('duel', { action: 'start', player: player.name, difficulty: level }, player, 500);
+        const level = parseDuelLevel(args.join(''));
+        if (!level) return ['难度：简单、普通、困难Ⅰ～Ⅵ、作弊Ⅰ～Ⅵ（比如 #决斗 困难Ⅲ）'];
+        const r = await act('duel', { action: 'start', player: player.name, difficulty: level.id }, player, 500);
         return r.ok ? [] : [r.text];
       },
     },

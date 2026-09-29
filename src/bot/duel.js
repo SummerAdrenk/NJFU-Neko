@@ -1,11 +1,16 @@
-// PVP 决斗：玩家向猫娘发起对决。所有模式都强制锁 1 滴血——谁先被打到只剩 1 滴血谁输，谁都不会被打死。
-// 装了面板模组 1.0.3+：模组拦住致命伤害、把血量锁在 1（对双方都有效）。没装：对方的血少到她一下可能打死时改用空手打。
+// PVP 决斗：玩家向猫娘发起对决。难度见 duelKits.js（简单 / 普通 / 困难Ⅰ～Ⅵ / 作弊Ⅰ～Ⅵ），招式见 duelTactics.js。
+// 所有难度都锁 1 滴血——谁先被打到只剩 1 滴血谁输，谁都不会被打死（吃金苹果、图腾触发后的黄心没打掉之前不算输）。
+// 装了面板模组 1.0.4+：模组拦住致命伤害（有图腾时让图腾触发），附近的爆炸不破坏方块，还能替双方保管背包、直接穿上临时装备。
+// 没装：她收尾改用空手打，保证不会打死对方；装备发进背包，打完按标记收回；不用爆炸。
 import fs from 'node:fs';
 import path from 'node:path';
 import { makeMovements } from './createBot.js';
 import { equipBestWeapon, findPlayer } from './helpers.js';
 import { Fighter } from './combat.js';
-import { combatFlags, giveCheatKit, removeCheatKit } from './combatModes.js';
+import { giveKitLines } from './combatModes.js';
+import { duelKit, duelLevel, parseDuelLevel } from './duelKits.js';
+import { absorption, DuelTactics } from './duelTactics.js';
+import { usePotion } from './potions.js';
 import { eatBest } from './survival.js';
 import { RUNTIME } from '../paths.js';
 import { abortError, sleep } from '../util.js';
@@ -13,14 +18,6 @@ import { abortError, sleep } from '../util.js';
 const STATS_FILE = path.join(RUNTIME, 'duels.json');
 const LOCK_HP = 1;
 const WEAPON_DAMAGE = { netherite_sword: 8, diamond_sword: 7, iron_sword: 6, stone_sword: 5, golden_sword: 4, wooden_sword: 4, netherite_axe: 10, diamond_axe: 9, iron_axe: 9, stone_axe: 9, golden_axe: 7, wooden_axe: 7, mace: 6, trident: 9 };
-const LEVELS = {
-  easy: { name: '简单', interval: 1100, strafe: false, crit: false, shield: false, axeBreak: false, lava: false, reach: 2.6 },
-  normal: { name: '普通', interval: 0, strafe: true, crit: false, shield: true, axeBreak: true, lava: false, reach: 3.0 },
-  hard: { name: '困难', interval: 0, strafe: true, crit: true, shield: true, axeBreak: true, lava: true, reach: 3.0 },
-  // 作弊：困难的打法 + 临时换上一套顶级附魔装备，打完收回
-  cheat: { name: '作弊', interval: 0, strafe: true, crit: true, shield: true, axeBreak: true, lava: true, reach: 3.0, cheat: true },
-};
-
 
 export class Duels {
   constructor(agent) {
@@ -62,7 +59,7 @@ export class Duels {
     return true;
   }
 
-  // 开始决斗（作为一个长任务）。difficulty：easy / normal / hard
+  // 开始决斗（作为一个长任务）。difficulty：难度 id 或中文名（easy / normal / hard…hard6 / cheat…cheat6，“困难Ⅲ”也行）
   start(player, difficulty = 'normal', ctx = {}) {
     const agent = this.agent;
     const bot = agent.bot;
@@ -71,26 +68,39 @@ export class Duels {
     const p = findPlayer(bot, player);
     if (!p?.entity) throw new Error(`${player} 离得太远或不在线，要站到我附近才能决斗`);
     if (this.active) throw new Error(`我正在和 ${this.active.player} 决斗`);
-    const level = LEVELS[difficulty] ?? LEVELS.normal;
+    if (agent.identity.opLevel < 2) throw new Error('决斗要临时发装备，需要管理员权限');
+    const level = parseDuelLevel(difficulty) ?? duelLevel('normal');
     const username = p.username;
     return agent.tasks.run('duel', `和 ${username} 决斗（${level.name}）`, async (task) => {
-      this.active = { player: username, surrendered: false };
-      // 面板模组的决斗锁血：双方都不会被打死
-      if (agent.serverInfo?.njfuCommands?.includes('duel') && agent.identity.opLevel >= 2) {
+      this.active = { player: username, surrendered: false, placed: [], fluids: [] };
+      const njfu = agent.serverInfo?.njfuCommands ?? [];
+      const locked = njfu.includes('duel');
+      const stash = njfu.includes('stash');
+      if (locked) {
         agent.adminCommand(`njfu duel on ${username} ${bot.username}`);
         this.active.locked = true;
       }
-      let kit = false;
+      const kit = duelKit(level, { fire: locked });
+      const worn = { me: null, them: null };
       try {
-        // 作弊难度：发一套临时的顶级附魔装备（本来就在作弊模式就不用再发）；切磋时剑上不带火焰附加
-        if (level.cheat && combatFlags(agent).mode !== '作弊') {
-          if (agent.identity.opLevel < 2) throw new Error('作弊难度要管理员权限（发临时装备）');
-          await giveCheatKit(agent, { tier: agent.cfg.combat?.cheat_tier, duel: true, fire: Boolean(cfg.lethal) });
-          kit = true;
+        const how = stash ? '你身上的东西我先替你保管，打完原样还你' : '装备会放进你背包，你自己穿上，打完收回';
+        const same = await agent.social.ask(username, `${level.name}：${level.summary}。要不要给你也穿一套一样的？${how}（20 秒内回“好”或“不用”）`, { timeoutMs: 20_000 });
+        worn.me = await this.wearKit(bot.username, kit, stash);
+        if (same) {
+          worn.them = await this.wearKit(username, kit, stash).catch((err) => {
+            agent.say(`给你换装备没成功：${err.message}`);
+            return null;
+          });
+          if (worn.them && !stash) {
+            agent.say('装备放进你背包了，快穿上～10 秒后开始');
+            await sleep(10_000, task.signal);
+          }
         }
         return await this.fightLoop(task, username, level, cfg);
       } finally {
-        if (kit) await removeCheatKit(agent).catch(() => {});
+        if (worn.them) await this.takeOffKit(username, worn.them).catch(() => {});
+        if (worn.me) await this.takeOffKit(bot.username, worn.me).catch(() => {});
+        this.clearArena();
         if (this.active?.locked) agent.adminCommand(`njfu duel off ${username} ${bot.username}`);
         // 没装模组时她可能真的被打倒：算对方赢
         if (this.active?.died && !this.active.recorded) {
@@ -106,20 +116,82 @@ export class Duels {
     }, { waitMs: ctx.waitMs ?? 1000, by: ctx.by ?? null });
   }
 
+  // 穿上临时装备。有保管功能：整个背包先交给模组保管，再把装备直接放进对应的格子；没有：发进背包（她自己的一件件穿上）。
+  async wearKit(target, kit, stash) {
+    const agent = this.agent;
+    const bot = agent.bot;
+    if (stash) {
+      const replies = await agent.chat.capture(async () => bot.chat(`/njfu stash save ${target}`), 1500);
+      const r = replies.map((t) => /\[NJFU-STASH\] (\S+) (\S+)/.exec(t)).find((m) => m && m[2] === target);
+      if (r?.[1] !== 'saved') {
+        throw new Error(r?.[1] === 'exists'
+          ? `${target} 上次保管的东西还没还（在存档的 njfu_neko_stash 文件夹里），这次先不换装备`
+          : `没能保管 ${target} 的背包，这次先不换装备`);
+      }
+      for (const k of kit) {
+        agent.adminCommand(`item replace entity ${target} ${k.slot} with ${k.item}`);
+        await sleep(60);
+      }
+      await sleep(600);
+      if (target === bot.username) bot.setQuickBarSlot(0);
+      return 'stash';
+    }
+    if (target === bot.username) await giveKitLines(agent, kit.map((k) => k.item));
+    else for (const k of kit) agent.adminCommand(`give ${target} ${k.item}`);
+    return 'give';
+  }
+
+  // 脱下临时装备：保管的原样放回；没保管的按标记收回（她自己再穿回原来的盔甲）
+  async takeOffKit(target, mode) {
+    const agent = this.agent;
+    const bot = agent.bot;
+    if (mode === 'stash') {
+      await agent.chat.capture(async () => bot.chat(`/njfu stash restore ${target}`), 1500);
+    } else {
+      agent.adminCommand(`clear ${target} *[custom_data~{neko_temp:1b}]`);
+      await sleep(600);
+    }
+    if (target === bot.username) {
+      await bot.armorManager?.equipAll?.();
+      const shield = bot.inventory.items().find((i) => i.name === 'shield');
+      if (shield && bot.inventory.slots[bot.getEquipmentDestSlot('off-hand')]?.name !== 'shield') await bot.equip(shield, 'off-hand').catch(() => {});
+      await equipBestWeapon(bot);
+    }
+  }
+
+  // 清场：放下的黑曜石、TNT、蜘蛛网、没收回来的水和岩浆、没炸的末影水晶
+  clearArena() {
+    const agent = this.agent;
+    const bot = agent.bot;
+    for (const p of this.active?.placed ?? []) {
+      if (/^(obsidian|tnt|cobweb)$/.test(bot.blockAt(p)?.name ?? '')) agent.adminCommand(`setblock ${p.x} ${p.y} ${p.z} air`);
+      agent.adminCommand(`kill @e[type=minecraft:end_crystal,x=${p.x},y=${p.y},z=${p.z},distance=..3]`);
+    }
+    for (const p of this.active?.fluids ?? []) {
+      if (/^(water|lava)$/.test(bot.blockAt(p)?.name ?? '')) agent.adminCommand(`setblock ${p.x} ${p.y} ${p.z} air`);
+    }
+  }
+
   async fightLoop(task, username, level, cfg) {
     const agent = this.agent;
     const bot = agent.bot;
     const say = (text) => agent.say(text);
     const healthKey = bot.registry.entitiesByName.player?.metadataKeys?.indexOf('health') ?? 9;
     const playerHealth = (e) => Number(e?.metadata?.[healthKey] ?? 20);
-    const weapon = await equipBestWeapon(bot);
-    await bot.armorManager?.equipAll?.();
+    // 只剩 1 滴血、黄心（吸收）也打没了才算输
+    const down = (hp, extra) => hp <= LOCK_HP && extra <= 0;
     const locked = Boolean(this.active?.locked);
+    const weapon = await equipBestWeapon(bot);
     // 最重的一击：武器伤害 + 锋利加成，再按暴击 ×1.5。没有模组锁血时，对方的血少于这个就改用空手打（一拳 1 点，打不死）
-    const sharp = bot.heldItem?.enchants?.find?.((en) => /sharpness/.test(en.name))?.lvl ?? (level.cheat ? 5 : 0);
+    const sharp = bot.heldItem?.enchants?.find?.((en) => /sharpness/.test(en.name))?.lvl ?? (level.weaponEnch ? 5 : 0);
     const maxHit = Math.ceil(((WEAPON_DAMAGE[weapon] ?? 1) + (sharp ? 0.5 * sharp + 0.5 : 0)) * 1.5) + 1;
 
-    say(`${username} 向我发起了决斗！难度：${level.name}，${cfg.lethal ? '真打' : '切磋'}，打到只剩 1 滴血就停，谁都不会被打死`);
+    say(`${username} 向我发起了决斗！难度：${level.name}，打到只剩 1 滴血就停，谁都不会被打死`);
+    if (level.potions) {
+      say('我先喝点药水～');
+      for (const kinds of [['strength'], ['swiftness'], ['fire_resistance']]) await usePotion(agent, kinds).catch(() => null);
+      await equipBestWeapon(bot);
+    }
     for (const n of ['3', '2', '1']) {
       await sleep(1000, task.signal);
       say(`${n}…`);
@@ -129,11 +201,15 @@ export class Duels {
 
     const started = Date.now();
     const fighter = new Fighter(agent, task.signal);
-    await fighter.equipShield();
-    // 和平时打玩家用同一套技巧（战斗模块的 pvpStep），难度决定用哪些；岩浆只在“真打”、而且有模组锁血的决斗里用
+    Object.assign(fighter.flags, { potions: level.potions, golden_apples: level.gapples > 0, totem: level.totems > 0, crits: level.tricks, shield: level.shield });
+    const tactics = new DuelTactics(agent, fighter, level, { locked });
+    this.active.placed = tactics.placed;
+    this.active.fluids = fighter.placedFluids;
+    if (level.shield) await fighter.equipShield();
+    // 和平时打玩家用同一套近身技巧（战斗模块的 pvpStep），难度决定用哪些；岩浆只在有模组锁血时用
     const style = {
-      reach: level.reach, interval: level.interval, strafe: level.strafe, crit: level.crit, shield: level.shield,
-      axeBreak: level.axeBreak, lava: level.lava && Boolean(cfg.lethal) && locked,
+      reach: level.tricks ? 3.0 : 2.6, interval: level.tricks ? 0 : 1100, strafe: level.tricks, crit: level.tricks, critChance: 0.7,
+      shield: level.shield, axeBreak: level.axe, lava: level.fluids && locked,
     };
     // 空手收尾（没有模组锁血时）：不跳劈、不换斧子、不用岩浆
     const bare = { ...style, bare: true, crit: false, axeBreak: false, lava: false };
@@ -152,12 +228,12 @@ export class Duels {
         say(`${username} 认输啦！嘿嘿，我赢了喵～`);
         break;
       }
-      if (playerHealth(e) <= LOCK_HP) {
+      if (down(playerHealth(e), absorption(bot, e))) {
         result = 'lose_player';
         say(`胜负已分！${username} 只剩 1 滴血了，我赢啦喵～`);
         break;
       }
-      if (bot.health <= LOCK_HP) {
+      if (down(bot.health, absorption(bot, bot.entity))) {
         result = 'win_player';
         say(`呜……我只剩 1 滴血了，${username} 赢了！`);
         break;
@@ -167,7 +243,9 @@ export class Duels {
         say('时间到！这局平手～');
         break;
       }
-      await fighter.pvpStep(e, !locked && playerHealth(e) <= maxHit ? bare : style);
+      const finishing = !locked && playerHealth(e) <= maxHit;
+      if (!finishing && await tactics.step(e)) continue;
+      await fighter.pvpStep(e, finishing ? bare : style);
     }
     bot.clearControlStates();
     this.active.recorded = true;
@@ -185,11 +263,11 @@ export class Duels {
       text = `平局（${player} 战绩 ${s.win} 胜 ${s.lose} 负 ${s.draw} 平）`;
     }
     agent.affection.change(player, 2, '和猫娘决斗', { kind: 'brain', owner: agent.chat.isOwner(player) });
-    // 用过岩浆：身上还在烧，先给双方抗火，免得锁血解除后被烧死
-    if (style.lava && agent.identity.opLevel >= 2) {
+    // 可能还在烧（岩浆、火焰附加、爆炸）：先给双方抗火，免得锁血解除后被烧死
+    if (locked) {
       for (const target of [player, bot.username]) agent.adminCommand(`effect give ${target} minecraft:fire_resistance 10 0 true`);
     }
-    if (cfg.heal_after && agent.identity.opLevel >= 2) {
+    if (cfg.heal_after) {
       for (const target of [player, bot.username]) {
         agent.adminCommand(`effect give ${target} minecraft:instant_health 1 2`);
         await sleep(300);

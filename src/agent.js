@@ -19,7 +19,7 @@ import { createEmotes, installInteractions } from './bot/emotes.js';
 import { TextureIndex } from './bot/textures.js';
 import { runAction } from './bot/actions.js';
 import { findPlayer, Vec3 } from './bot/helpers.js';
-import { MENU_ACTIONS, showInventoryDialog, showMenuDialog, supportsDialog } from './bot/inventoryView.js';
+import { duelDialog, MENU_ACTIONS, showDialog, showInventoryDialog, showMenuDialog, supportsDialog } from './bot/inventoryView.js';
 import { MemoryStore } from './memory.js';
 import { Affection } from './affection.js';
 import { ChestIndex } from './chestIndex.js';
@@ -165,6 +165,10 @@ export class Agent extends EventEmitter {
     this.events.push('bot', { what: 'menu_button', by: player, detail: what });
     if (what === 'bag') {
       if (this.identity.opLevel >= 2 && supportsDialog(this)) showInventoryDialog(this, player);
+      return;
+    }
+    if (what === 'duel_menu') {
+      if (this.identity.opLevel >= 2 && supportsDialog(this)) showDialog(this, player, duelDialog(this));
       return;
     }
     const button = MENU_ACTIONS[what];
