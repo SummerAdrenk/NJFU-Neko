@@ -1,0 +1,43 @@
+{
+  "name": "njfu-neko",
+  "version": "0.1.0",
+  "description": "NJFU智慧猫娘：能像玩家一样进入 Minecraft、在聊天栏对话并执行指令的 AI 伙伴（Mineflayer + ViaProxy + Claude）",
+  "type": "module",
+  "main": "src/index.js",
+  "bin": {
+    "neko": "src/cli.js"
+  },
+  "scripts": {
+    "setup": "node scripts/setup.js",
+    "start": "node src/index.js",
+    "ctl": "node src/cli.js",
+    "skin": "node scripts/skin-pack.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "minecraft",
+    "mineflayer",
+    "claude",
+    "bot",
+    "fabric",
+    "viaproxy"
+  ],
+  "license": "MIT",
+  "private": true,
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.129.0",
+    "minecraft-data": "^3.117.0",
+    "minecraft-protocol": "^1.68.0",
+    "mineflayer": "^4.39.0",
+    "mineflayer-armor-manager": "^2.0.1",
+    "mineflayer-collectblock": "^1.6.0",
+    "mineflayer-pathfinder": "^2.4.5",
+    "mineflayer-pvp": "^1.3.2",
+    "mineflayer-tool": "^1.2.0",
+    "prismarine-nbt": "^2.8.0",
+    "smol-toml": "^1.9.0",
+    "vec3": "^0.2.0"
+  }
+}

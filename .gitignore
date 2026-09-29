@@ -1,0 +1,9 @@
+node_modules/
+runtime/
+config.toml
+.env
+*.log
+
+# 皮肤：只提交自己画的，别人的作品只在本地使用
+assets/*.png
+!assets/skins/

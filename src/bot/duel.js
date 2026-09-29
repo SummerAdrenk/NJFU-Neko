@@ -1,0 +1,194 @@
+// PVP 决斗：玩家向猫娘发起对决。默认“切磋”规则——把对方打到只剩几颗心就停手，不会真的打死。
+import fs from 'node:fs';
+import path from 'node:path';
+import { goals, makeMovements } from './createBot.js';
+import { equipBestWeapon, findPlayer } from './helpers.js';
+import { eatBest } from './survival.js';
+import { RUNTIME } from '../paths.js';
+import { abortError, sleep } from '../util.js';
+
+const STATS_FILE = path.join(RUNTIME, 'duels.json');
+const WEAPON_DAMAGE = { netherite_sword: 8, diamond_sword: 7, iron_sword: 6, stone_sword: 5, golden_sword: 4, wooden_sword: 4, netherite_axe: 10, diamond_axe: 9, iron_axe: 9, stone_axe: 9, golden_axe: 7, wooden_axe: 7, mace: 6, trident: 9 };
+const LEVELS = {
+  easy: { name: '简单', interval: 1100, strafe: false, crit: false, reach: 2.6 },
+  normal: { name: '普通', interval: 0, strafe: true, crit: false, reach: 3.0 },
+  hard: { name: '困难', interval: 0, strafe: true, crit: true, reach: 3.0 },
+};
+
+function attackCooldown(item) {
+  if (!item) return 260;
+  if (/_sword$/.test(item.name)) return 640;
+  if (/_axe$/.test(item.name)) return item.name.startsWith('wooden') || item.name.startsWith('stone') ? 1260 : 1000;
+  if (item.name === 'trident') return 910;
+  return 260;
+}
+
+export class Duels {
+  constructor(agent) {
+    this.agent = agent;
+    this.active = null;
+    try {
+      this.stats = JSON.parse(fs.readFileSync(STATS_FILE, 'utf8'));
+    } catch {
+      this.stats = {};
+    }
+  }
+
+  save() {
+    fs.mkdirSync(RUNTIME, { recursive: true });
+    fs.writeFileSync(STATS_FILE, `${JSON.stringify(this.stats, null, 2)}\n`);
+  }
+
+  record(player, result) {
+    const s = (this.stats[player] ??= { win: 0, lose: 0, draw: 0 });
+    s[result] += 1;
+    this.save();
+    return s;
+  }
+
+  isDueling(player) {
+    return this.active?.player === player;
+  }
+
+  statsText(player) {
+    const s = this.stats[player];
+    return s ? `${player} 对猫娘的战绩：${s.win} 胜 ${s.lose} 负 ${s.draw} 平` : `${player} 还没和猫娘决斗过`;
+  }
+
+  surrender(player) {
+    if (!this.isDueling(player)) return false;
+    this.active.surrendered = true;
+    return true;
+  }
+
+  // 开始决斗（作为一个长任务）。difficulty：easy / normal / hard
+  start(player, difficulty = 'normal', ctx = {}) {
+    const agent = this.agent;
+    const bot = agent.bot;
+    const cfg = agent.cfg.duel;
+    if (!cfg.enabled) throw new Error('配置里关闭了决斗');
+    const p = findPlayer(bot, player);
+    if (!p?.entity) throw new Error(`${player} 离得太远或不在线，要站到我附近才能决斗`);
+    if (this.active) throw new Error(`我正在和 ${this.active.player} 决斗`);
+    const level = LEVELS[difficulty] ?? LEVELS.normal;
+    const username = p.username;
+    return agent.tasks.run('duel', `和 ${username} 决斗（${level.name}）`, async (task) => {
+      this.active = { player: username, surrendered: false };
+      try {
+        return await this.fightLoop(task, username, level, cfg);
+      } finally {
+        this.active = null;
+        bot.clearControlStates();
+        bot.pathfinder.setGoal(null);
+      }
+    }, { waitMs: ctx.waitMs ?? 1000, by: ctx.by ?? null });
+  }
+
+  async fightLoop(task, username, level, cfg) {
+    const agent = this.agent;
+    const bot = agent.bot;
+    const say = (text) => agent.say(text);
+    const healthKey = bot.registry.entitiesByName.player?.metadataKeys?.indexOf('health') ?? 9;
+    const playerHealth = (e) => Number(e?.metadata?.[healthKey] ?? 20);
+    const weapon = await equipBestWeapon(bot);
+    await bot.armorManager?.equipAll?.();
+    const maxHit = Math.ceil((WEAPON_DAMAGE[weapon] ?? 1) * 1.5) + 1;
+    const mercy = cfg.lethal ? 0 : Math.max(Number(cfg.mercy_health ?? 6), maxHit);
+
+    say(`${username} 向我发起了决斗！难度：${level.name}，${cfg.lethal ? '真打' : '切磋（打到只剩几颗心就停）'}`);
+    for (const n of ['3', '2', '1']) {
+      await sleep(1000, task.signal);
+      say(`${n}…`);
+    }
+    await sleep(800, task.signal);
+    say('开打喵！');
+
+    const started = Date.now();
+    let nextAttack = 0;
+    let strafeDir = 'left';
+    let nextStrafe = 0;
+    let result = 'draw';
+    bot.pathfinder.setMovements(makeMovements(bot));
+    for (;;) {
+      if (task.signal.aborted) throw abortError(task.signal);
+      const e = findPlayer(bot, username)?.entity;
+      if (!e) {
+        result = 'draw';
+        say(`${username} 跑掉了？那这局就算平手吧`);
+        break;
+      }
+      if (this.active.surrendered) {
+        result = 'lose_player';
+        say(`${username} 认输啦！嘿嘿，我赢了喵～`);
+        break;
+      }
+      if (!cfg.lethal && playerHealth(e) <= mercy) {
+        result = 'lose_player';
+        say(`胜负已分！${username} 只剩 ${Math.ceil(playerHealth(e) / 2)} 颗心了，我赢啦喵～`);
+        break;
+      }
+      if (bot.health <= Number(cfg.surrender_health ?? 4)) {
+        result = 'win_player';
+        say(`呜……我打不过了，${username} 赢了！`);
+        break;
+      }
+      if (Date.now() - started > (cfg.time_limit_seconds ?? 180) * 1000) {
+        result = 'draw';
+        say('时间到！这局平手～');
+        break;
+      }
+      const dist = e.position.distanceTo(bot.entity.position);
+      await bot.lookAt(e.position.offset(0, 1.5, 0), true);
+      if (dist > level.reach + 1.5) {
+        bot.clearControlStates();
+        bot.pathfinder.setGoal(new goals.GoalFollow(e, 1.5), true);
+      } else {
+        bot.pathfinder.setGoal(null);
+        bot.setControlState('forward', dist > 2.2);
+        bot.setControlState('back', dist < 1.2);
+        bot.setControlState('sprint', dist > 2.2);
+        if (level.strafe && Date.now() > nextStrafe) {
+          strafeDir = strafeDir === 'left' ? 'right' : 'left';
+          nextStrafe = Date.now() + 500 + Math.random() * 600;
+          bot.setControlState('left', strafeDir === 'left');
+          bot.setControlState('right', strafeDir === 'right');
+        }
+        const interval = level.interval || attackCooldown(bot.heldItem);
+        if (dist <= level.reach && Date.now() >= nextAttack) {
+          if (level.crit && bot.entity.onGround && Math.random() < 0.6) {
+            bot.setControlState('jump', true);
+            await sleep(330, task.signal);
+            bot.setControlState('jump', false);
+          }
+          bot.attack(e);
+          nextAttack = Date.now() + interval;
+        }
+      }
+      await sleep(80, task.signal);
+    }
+    bot.clearControlStates();
+
+    const player = username;
+    let text;
+    if (result === 'lose_player') {
+      const s = this.record(player, 'lose');
+      text = `猫娘赢了（${player} 战绩 ${s.win} 胜 ${s.lose} 负 ${s.draw} 平）`;
+    } else if (result === 'win_player') {
+      const s = this.record(player, 'win');
+      text = `${player} 赢了（战绩 ${s.win} 胜 ${s.lose} 负 ${s.draw} 平）`;
+    } else {
+      const s = this.record(player, 'draw');
+      text = `平局（${player} 战绩 ${s.win} 胜 ${s.lose} 负 ${s.draw} 平）`;
+    }
+    agent.affection.change(player, 2, '和猫娘决斗', { kind: 'brain', owner: agent.chat.isOwner(player) });
+    if (cfg.heal_after && agent.identity.opLevel >= 2) {
+      for (const target of [player, bot.username]) {
+        await agent.chat.capture(async () => bot.chat(`/effect give ${target} minecraft:instant_health 1 2`), 300);
+      }
+      say('双方都回满血啦，下次再来～');
+    } else if (bot.food < 20) {
+      await eatBest(bot).catch(() => {});
+    }
+    return text;
+  }
+}

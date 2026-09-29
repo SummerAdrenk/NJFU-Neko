@@ -1,0 +1,232 @@
+# ─────────────────────────────────────────────────────────────
+#  NJFU智慧猫娘 · 配置文件
+#  第一次运行 npm run setup 会把本模板复制成 config.toml，请修改 config.toml。
+#  TOML 格式：# 后面是注释；文字要加英文双引号；true / false 表示开 / 关。
+#  没写的项目会自动使用本模板里的默认值。
+# ─────────────────────────────────────────────────────────────
+
+[server]
+# 要连接的服务器。局域网世界填 127.0.0.1 和“对局域网开放”时显示的端口。
+host = "127.0.0.1"
+port = 25565
+# 服务器版本："auto" 自动检测（推荐）。
+version = "auto"
+
+[account]
+# 登录名：3～16 个字符，只能用英文字母、数字、下划线（服务器不认中文名）。
+# 中文名「NJFU智慧猫娘」通过下面的 [identity] 显示在聊天栏和头顶。
+username = "NJFU_Neko"
+# "offline"：离线/局域网（不需要账号）
+# "microsoft"：正版账号。不用写密码：第一次启动时控制台会给出微软登录码，
+#              在浏览器里登录一次即可，登录凭据缓存在 runtime/auth 里。
+auth = "offline"
+
+[identity]
+display_name = "NJFU智慧猫娘"
+# 名字颜色：light_purple、aqua、gold、green、yellow、red 等
+name_color = "light_purple"
+team_name = "njfu_neko"
+# 有管理员权限时，自动创建队伍，让头顶和列表里显示 [NJFU智慧猫娘] 前缀
+setup_team = true
+# 有管理员权限时，用 /tellraw 以「<NJFU智慧猫娘> …」的样子说话（没有权限就普通聊天）
+speak_with_tellraw = true
+# 进入世界时的招呼语，留空 "" 表示不打招呼
+greeting = "NJFU智慧猫娘上线啦喵～ 喊一声「猫娘」就能叫我，发 #帮助 看看我会做什么哦"
+# 没有管理员权限时，是否在聊天栏提醒一次
+ask_for_op = true
+
+[viaproxy]
+# 协议转换代理：mineflayer 暂不支持的新版本服务器（如 26.2）需要经它转换。
+# "auto"：版本不支持时自动启用（推荐）；"always"：总是启用；"never"：从不启用
+mode = "auto"
+# Java 可执行文件（需要 Java 17+）。不在 PATH 里就写完整路径，例如 "D:/Code/Java/bin/java.exe"
+java = "java"
+jar = "runtime/viaproxy/ViaProxy.jar"
+# 代理在本机监听的端口（被占用时自动顺延）
+bind_port = 25568
+# 机器人以哪个版本连接代理（mineflayer 支持的最高版本）
+client_version = "26.1"
+# 目标服务器是正版验证（online-mode）且需要代理时，改成 "ACCOUNT"，
+# 并先运行一次 ViaProxy 图形界面（java -jar ViaProxy.jar）在 Accounts 里登录账号。
+auth_method = "NONE"
+
+[chat]
+# 聊天里包含这些词（不分大小写）就算在叫猫娘
+triggers = ["猫娘", "NJFU", "neko"]
+# true：回应所有人的每一句话（热闹的服务器上别开）
+respond_to_all = false
+# 服务器里只有你和猫娘两个人时，你说的每句话都算对猫娘说
+respond_when_alone = true
+# 猫娘回复某人后的这么多秒内，这个人的下一句话也算对猫娘说（0 关闭）
+follow_up_seconds = 60
+# 主人名单（游戏里的名字）。只有主人能让猫娘执行 / 命令、攻击玩家、用 #过来 等命令。
+# 留空 [] 表示所有人都是主人——只适合自己的单机/局域网世界！上服务器前一定要填。
+# 注意：离线模式（关闭正版验证）下名字可以被冒用，对外开放时请设访问密码或白名单。
+owners = []
+# 快捷命令前缀：#状态 #背包 #帮助 …
+command_prefix = "#"
+# 每行最多多少字，太长会自动分行
+max_line_length = 90
+
+[behavior]
+# 饿了自动吃东西
+auto_eat = true
+# 自动穿上更好的盔甲
+auto_armor = true
+# 死亡后自动重生
+auto_respawn = true
+# 被怪物攻击会还手（苦力怕会躲开）
+self_defense = true
+# 主人在打怪时过去帮忙
+assist_owner = true
+# 主人被怪物攻击时去保护
+protect_owner = true
+# 血量低于这个值时撤退（0 表示不撤退）
+retreat_health = 8
+# 不攻击挂了命名牌的生物（防止误伤刷怪塔、农场等机器里的生物）
+never_attack_named = true
+# 禁战区：这些长方体区域里的生物不打，每项写 [x1, y1, z1, x2, y2, z2]
+no_attack_zones = []
+# 没事做时陪在主人身边、四处走动
+companion = true
+# 离主人超过这么多格（或看不见主人）时自动传送过去，需要管理员权限（0 关闭）
+teleport_distance = 48
+# 自动捡起身边的掉落物
+pickup_items = true
+# 缺盔甲、武器、食物时，到记得的箱子里拿
+use_chests = true
+# 有人天黑上床时，问要不要一起睡
+ask_to_sleep = true
+# 断线后自动重连
+reconnect = true
+reconnect_delay_seconds = 15
+# 走路时是否允许挖开挡路的方块（false 更安全，不会误拆你的房子）
+dig_while_pathing = false
+
+[emotes]
+# 头顶冒爱心、猫叫声等特效（需要管理员权限）
+effects = true
+# 摸头、捡木棍等互动
+interactions = true
+# 上线下线问候、死亡关心、进度祝贺、早晚提醒
+greetings = true
+# 玩家死亡时去死亡地点帮忙看着掉落物
+guard_death_drops = true
+# 闲着时偶尔做点小动作
+idle_emotes = true
+
+[ui]
+# 准心对准猫娘时显示她的状态和背包（蹲下看她会在聊天栏画出背包格子）
+gaze = true
+gaze_distance = 6
+# #背包 弹出可视化窗口（服务器 1.21.6+ 且猫娘有管理员权限时可用）
+inventory_dialog = true
+# 游戏客户端 jar 的路径，用来读取物品贴图清单，让背包里显示物品图标。
+# 留空时会根据 mods.litematica_schematics 自动推断；例如 "D:/Game/.minecraft/versions/26.2/26.2.jar"
+client_jar = ""
+# 关掉“管理员命令广播”（游戏规则 log_admin_commands）。
+# 猫娘执行的命令默认会在所有管理员的聊天栏里显示一条灰色的 [NJFU_Neko: …]；
+# 打开这项后，猫娘上线时会把这条规则关掉，准心对准时的动作栏显示、特效等才不会刷屏。
+# 不打开的话，只有“蹲下 + 看着她”时私聊你一条状态。
+quiet_admin_commands = false
+
+[affection]
+# 好感度系统
+enabled = true
+# 新认识的玩家的初始好感，主人的初始好感
+start = 20
+owner_start = 50
+# 每天通过聊天和大脑判断最多能加多少好感、通过送礼最多加多少
+daily_chat_cap = 10
+daily_gift_cap = 30
+
+[duel]
+# PVP 决斗
+enabled = true
+# false：切磋模式，把对方打到只剩几颗心就停；true：真打
+lethal = false
+# 切磋模式下，对方生命低于这个值就算输（会根据猫娘的武器自动调高，保证不会被一击打死）
+mercy_health = 6
+# 猫娘生命低于这个值就认输
+surrender_health = 4
+# 一局最长多少秒
+time_limit_seconds = 180
+# 结束后给双方回满血（需要管理员权限）
+heal_after = true
+
+[mods]
+# 投影（Litematica）原理图文件夹，例如 "D:/Game/Minecraft/.minecraft/schematics"
+# （开了版本隔离的话在 versions/版本名/schematics）。留空表示不用。
+litematica_schematics = ""
+# 一次最多建造多少个方块的原理图
+max_schematic_blocks = 20000
+# Chunkbase 地图链接的版本参数，留空按服务器版本自动生成（如 java_26_2）
+chunkbase_platform = ""
+
+[brain]
+# 谁来当猫娘的“大脑”：
+#   "api"         独立运行，直接调用 Claude API（需要下面的认证，按用量计费）
+#   "claude-code" 由 Claude Code 会话来思考和操作（可以用 Claude 官网订阅账号，见 CLAUDE.md）
+#   "none"        只挂机，不思考不回话（快捷命令、自动行为照常工作）
+mode = "api"
+
+[brain.api]
+# 认证方式（按顺序，找到一个就用）：
+#   1. 在这里填控制台的 API Key（sk-ant- 开头）
+#   2. 留空，读取环境变量 ANTHROPIC_API_KEY（更安全，分享配置文件也不会泄露）
+#   3. 留空，用官方命令行 ant auth login 在浏览器登录 Claude 平台账号（不需要 Key）
+api_key = ""
+# API 地址，留空用官方地址；使用代理/中转服务时填写（你的 Key 会发给这个地址，请确认可信）
+base_url = ""
+model = "claude-opus-5-5"
+# 思考力度："low" 反应最快最省钱 / "medium" 均衡（推荐）/ "high" 更聪明但更慢更贵
+effort = "medium"
+max_tokens = 16000
+# 一次对话里最多连续调用多少轮工具
+max_tool_rounds = 12
+# 被安全策略拒绝时，自动换 Anthropic 推荐的备用模型重试（按备用模型的价格计费）
+# 用的代理不支持这个功能而报错时，改成 false
+fallbacks = true
+# 让工具参数严格符合格式（代理不支持时会自动关闭）
+strict_tools = true
+# 允许大脑上网查资料（只能访问下面的网站）；会产生额外的搜索费用
+web_search = true
+web_domains = ["zh.minecraft.wiki", "minecraft.wiki", "www.mcmod.cn", "mcmod.cn"]
+# 给大脑看最近多少条聊天
+recent_chat_lines = 20
+# 每小时最多思考多少次（防止刷屏和意外花费）
+max_episodes_per_hour = 120
+# 后台任务完成后，最多连续自动续做几步（有人说话会重新计数）
+max_auto_steps = 8
+
+[commands]
+# 是否允许执行 / 命令
+allow = true
+# 任何玩家请求都可以用的命令（查询类、不影响别人的）。其余命令只替主人执行。
+anyone = ["locate", "seed", "list", "help", "info", "distance", "counter", "log", "tellraw", "msg", "tell", "w", "me", "teammsg", "tm", "trigger"]
+# 这些命令影响大，执行前要先和主人确认
+confirm = ["fill", "clone", "kill", "gamerule", "difficulty", "clear", "summon", "setworldspawn", "worldborder", "forceload", "gamemode", "script", "carpet", "fillbiome", "place", "reload", "datapack", "function", "spreadplayers"]
+# 永远不执行的命令
+deny = ["stop", "op", "deop", "ban", "ban-ip", "pardon", "pardon-ip", "kick", "whitelist", "save-off", "publish", "unpublish", "transfer", "jfr", "perf", "debug"]
+
+[control]
+# 本机控制接口（命令行 neko、Claude Code 模式都靠它），只接受本机带令牌的请求
+enabled = true
+host = "127.0.0.1"
+port = 3777
+# 允许在机器人进程里执行任意 JS（调试用）。平时保持关闭更安全。
+allow_eval = false
+
+[logging]
+# 控制台显示的日志级别：debug / info / warn / error
+console_level = "info"
+# 日志文件（runtime/logs/neko-日期.log）记录的级别，debug 最详细，排查问题时有用
+file_level = "debug"
+# 日志文件保留天数
+keep_days = 14
+# 把每次 Claude API 请求和回复的完整内容也写进日志（很长，排查大脑问题时再开）
+log_api_payloads = false
+
+[compat]
+# 模拟 Fabric 客户端握手（连装了 Fabric API 的服务器/局域网世界时必需；普通服务器无影响）
+fabric_handshake = true
