@@ -163,19 +163,34 @@ export function installInteractions(agent, bot) {
   let lastIdleEmote = Date.now();
   let lastTimeCheck = null;
 
-  // 摸头：玩家蹲在猫娘身边 2.5 格内并看着她
+  // 摸头：玩家蹲在猫娘身边 2.5 格内并看着她。Shift+右键打开菜单、面板时也会先蹲一下，
+  // 所以等 1.5 秒再反应：这期间收到这个玩家打开菜单/面板的通知，就不算摸头。
+  const pendingPet = new Map();
+  const onPanel = ({ player }) => {
+    clearTimeout(pendingPet.get(player));
+    pendingPet.delete(player);
+  };
+  agent.on('panel', onPanel);
+  bot.once('end', () => {
+    agent.off('panel', onPanel);
+    for (const t of pendingPet.values()) clearTimeout(t);
+  });
   bot.on('entityCrouch', (entity) => {
     if (!cfg.interactions || entity.type !== 'player' || entity.username === bot.username || !agent.online) return;
     if (entity.position.distanceTo(bot.entity.position) > 2.5 || !isLookingAt(entity, bot.entity, 3)) return;
     const name = entity.username;
-    if (Date.now() - (lastPet.get(name) ?? 0) < 20_000) return;
-    lastPet.set(name, Date.now());
-    const owner = agent.chat.isOwner(name);
-    const r = agent.affection.change(name, 1, '摸了摸猫娘的头', { kind: 'chat', owner });
-    agent.events.push('bot', { what: 'pet', by: name, detail: `好感 ${r.score}` });
-    const lines = ['嘿嘿，好舒服喵～', '呼噜呼噜……', '再摸一下嘛喵～', '主人的手好温暖～', '蹭蹭～'];
-    agent.say(lines[Math.floor(Math.random() * lines.length)]);
-    emotes.lookAtPlayer(name).then(() => emotes.hearts(5)).then(() => emotes.meow('purr')).catch(() => {});
+    if (pendingPet.has(name) || Date.now() - (lastPet.get(name) ?? 0) < 20_000) return;
+    pendingPet.set(name, setTimeout(() => {
+      pendingPet.delete(name);
+      if (!agent.online) return;
+      lastPet.set(name, Date.now());
+      const owner = agent.chat.isOwner(name);
+      const r = agent.affection.change(name, 1, '摸了摸猫娘的头', { kind: 'chat', owner });
+      agent.events.push('bot', { what: 'pet', by: name, detail: `好感 ${r.score}` });
+      const lines = ['嘿嘿，好舒服喵～', '呼噜呼噜……', '再摸一下嘛喵～', '主人的手好温暖～', '蹭蹭～'];
+      agent.say(lines[Math.floor(Math.random() * lines.length)]);
+      emotes.lookAtPlayer(name).then(() => emotes.hearts(5)).then(() => emotes.meow('purr')).catch(() => {});
+    }, 1500));
   });
 
   // 捡木棍游戏：玩家扔来的木棍/骨头，捡到后还给他
