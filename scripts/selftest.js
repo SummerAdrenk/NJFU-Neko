@@ -257,6 +257,14 @@ const duels = new Duels({ cfg: {} });
 duels.last = { player: 'Steve', endedAt: Date.now() };
 check('决斗 刚结束时的余招不扣好感', duels.isDueling('Steve', 5000) && !duels.isDueling('Steve') && !duels.isDueling('Alex', 5000));
 
+const { Social } = await import('../src/bot/social.js');
+const giftSocial = Object.create(Social.prototype);
+giftSocial.drops = new Map();
+const giftBot = { players: { Steve: { username: 'Steve', entity: { position: new Vec3(0.5, 64, 0.5) } } } };
+giftSocial.onItemDrop(giftBot, { id: 1, position: new Vec3(0.6, 65.32, 0.7) });
+giftSocial.onItemDrop(giftBot, { id: 2, position: new Vec3(1.2, 64.1, 0.5) });
+check('礼物：玩家自己丢出的才算，身边怪物掉的东西不算', giftSocial.drops.get(1)?.thrower === 'Steve' && giftSocial.drops.get(2)?.thrower === null);
+
 const junk = await import('../src/bot/junk.js');
 const junkBot = {
   inventory: {

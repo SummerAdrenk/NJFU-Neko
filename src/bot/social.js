@@ -279,12 +279,15 @@ export class Social {
 
   onItemDrop(bot, entity) {
     if (this.drops.has(entity.id)) return;
-    // 物品刚出现时离谁最近，就当是谁丢的（丢出的物品从玩家眼睛高度飞出）。
+    // 谁丢的：玩家丢出的物品刚出现时就在他身上、眼睛下面一点（脚上方 1.3 格左右）；
+    // 怪物掉的东西出现在怪的脚边（低一米多），离玩家再近也不算他送的。
     let thrower = null;
-    let best = 2.6;
+    let best = 1.2;
     for (const p of Object.values(bot.players)) {
       if (!p.entity) continue;
-      const d = p.entity.position.offset(0, 1.3, 0).distanceTo(entity.position);
+      const hand = p.entity.position.offset(0, 1.32, 0);
+      if (Math.abs(entity.position.y - hand.y) > 0.45) continue;
+      const d = Math.hypot(entity.position.x - hand.x, entity.position.z - hand.z);
       if (d < best) {
         best = d;
         thrower = p.username;
