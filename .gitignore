@@ -7,3 +7,6 @@ config.toml
 # 皮肤：只提交自己画的，别人的作品只在本地使用
 assets/*.png
 !assets/skins/
+
+# 面板模组的编译中间文件（mod/dist 里的成品 jar 保留）
+mod/build/

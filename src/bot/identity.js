@@ -48,11 +48,7 @@ export class Identity {
 
   async onJoined(bot) {
     if (this.agent.bot !== bot || !this.agent.online) return;
-    if (this.opLevel >= 2) {
-      // 配置允许时关掉“管理员命令广播”，否则猫娘的每条命令都会在管理员聊天栏里提示一遍
-      if (this.agent.cfg.ui.quiet_admin_commands) await this.agent.adminBroadcast(false);
-      await this.setupTeam(bot);
-    }
+    if (this.opLevel >= 2) await this.setupTeam(bot);
     if (this.cfg.greeting) this.say(this.cfg.greeting);
     if (this.opLevel < 2 && this.cfg.ask_for_op && !this.askedForOp) {
       this.askedForOp = true;
@@ -72,12 +68,10 @@ export class Identity {
       `/team modify ${team} color ${color}`,
       `/team join ${team} ${bot.username}`,
     ];
-    await this.agent.withQuietCommands(true, async () => {
-      for (const command of commands) {
-        bot.chat(command);
-        await sleep(250);
-      }
-    });
+    for (const command of commands) {
+      this.agent.adminCommand(command);
+      await sleep(250);
+    }
   }
 
   canTellraw() {

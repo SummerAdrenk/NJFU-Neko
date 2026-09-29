@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { goals, makeMovements } from './createBot.js';
 import { equipBestWeapon, findPlayer } from './helpers.js';
+import { Fighter, reachTo } from './combat.js';
 import { eatBest } from './survival.js';
 import { RUNTIME } from '../paths.js';
 import { abortError, sleep } from '../util.js';
@@ -10,9 +11,9 @@ import { abortError, sleep } from '../util.js';
 const STATS_FILE = path.join(RUNTIME, 'duels.json');
 const WEAPON_DAMAGE = { netherite_sword: 8, diamond_sword: 7, iron_sword: 6, stone_sword: 5, golden_sword: 4, wooden_sword: 4, netherite_axe: 10, diamond_axe: 9, iron_axe: 9, stone_axe: 9, golden_axe: 7, wooden_axe: 7, mace: 6, trident: 9 };
 const LEVELS = {
-  easy: { name: '简单', interval: 1100, strafe: false, crit: false, reach: 2.6 },
-  normal: { name: '普通', interval: 0, strafe: true, crit: false, reach: 3.0 },
-  hard: { name: '困难', interval: 0, strafe: true, crit: true, reach: 3.0 },
+  easy: { name: '简单', interval: 1100, strafe: false, crit: false, shield: false, reach: 2.6 },
+  normal: { name: '普通', interval: 0, strafe: true, crit: false, shield: true, reach: 3.0 },
+  hard: { name: '困难', interval: 0, strafe: true, crit: true, shield: true, reach: 3.0 },
 };
 
 function attackCooldown(item) {
@@ -78,6 +79,7 @@ export class Duels {
         return await this.fightLoop(task, username, level, cfg);
       } finally {
         this.active = null;
+        if (bot.usingHeldItem) bot.deactivateItem();
         bot.clearControlStates();
         bot.pathfinder.setGoal(null);
       }
@@ -104,6 +106,8 @@ export class Duels {
     say('开打喵！');
 
     const started = Date.now();
+    const fighter = new Fighter(agent, task.signal);
+    await fighter.equipShield();
     let nextAttack = 0;
     let strafeDir = 'left';
     let nextStrafe = 0;
@@ -154,15 +158,15 @@ export class Duels {
           bot.setControlState('right', strafeDir === 'right');
         }
         const interval = level.interval || attackCooldown(bot.heldItem);
-        if (dist <= level.reach && Date.now() >= nextAttack) {
-          if (level.crit && bot.entity.onGround && Math.random() < 0.6) {
-            bot.setControlState('jump', true);
-            await sleep(330, task.signal);
-            bot.setControlState('jump', false);
-          }
-          bot.attack(e);
-          nextAttack = Date.now() + interval;
-        }
+        if (dist <= level.reach + 0.5 && Date.now() >= nextAttack) {
+          // 困难：跳劈（等到下落时出手才算暴击）；否则普通出手。出手前放下盾牌
+          const crit = level.crit && Math.random() < 0.7 && await fighter.critStrike(e);
+          if (!crit && reachTo(bot, e) <= level.reach) fighter.hit(e);
+          if (crit || reachTo(bot, e) <= level.reach) nextAttack = Date.now() + interval;
+        } else if (level.shield && dist < 4 && nextAttack - Date.now() > 300) {
+          // 等冷却的空档举盾挡对方的攻击（被斧头打掉后会自动等冷却结束）
+          fighter.raise(e.position.offset(0, 1.4, 0));
+        } else fighter.lower();
       }
       await sleep(80, task.signal);
     }
@@ -183,7 +187,8 @@ export class Duels {
     agent.affection.change(player, 2, '和猫娘决斗', { kind: 'brain', owner: agent.chat.isOwner(player) });
     if (cfg.heal_after && agent.identity.opLevel >= 2) {
       for (const target of [player, bot.username]) {
-        await agent.chat.capture(async () => bot.chat(`/effect give ${target} minecraft:instant_health 1 2`), 300);
+        agent.adminCommand(`effect give ${target} minecraft:instant_health 1 2`);
+        await sleep(300);
       }
       say('双方都回满血啦，下次再来～');
     } else if (bot.food < 20) {

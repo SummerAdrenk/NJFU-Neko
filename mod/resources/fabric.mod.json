@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "njfu_neko_panel",
+  "version": "1.0.0",
+  "name": "NJFU智慧猫娘 面板",
+  "description": "右键 NJFU智慧猫娘 打开她的人物面板（模型、盔甲、副手、背包），可以直接拿取和放入物品；Shift+右键打开她的功能菜单；让猫娘执行命令时不在聊天栏刷屏。",
+  "authors": ["NJFU智慧猫娘 contributors"],
+  "license": "MIT",
+  "environment": "*",
+  "entrypoints": {
+    "main": ["cn.njfu.neko.panel.NekoPanelMod"],
+    "client": ["cn.njfu.neko.panel.client.NekoPanelClient"]
+  },
+  "depends": {
+    "fabricloader": ">=0.17.0",
+    "minecraft": ">=26.2",
+    "fabric-api": "*",
+    "java": ">=25"
+  }
+}

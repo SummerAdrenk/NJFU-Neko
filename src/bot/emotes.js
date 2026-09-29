@@ -8,17 +8,15 @@ import { sleep } from '../util.js';
 const log = getLog('互动');
 const FETCH_ITEMS = new Set(['stick', 'bone']);
 
-// 需要管理员权限的特效（粒子、声音）。只有打开 ui.quiet_admin_commands（关掉管理员命令广播）后才播放，
-// 否则每个特效都会在管理员的聊天栏里多一条灰色提示。
+// 需要管理员权限的特效（粒子、声音）。只在装了面板模组（能静默执行命令）时播放，
+// 否则每个特效都会在管理员的聊天栏里多一条灰色提示。坐下/站起这类必须的动作照常执行。
 async function effects(agent, commands, { required = false } = {}) {
   if (!agent.online || agent.identity.opLevel < 2) return;
-  if (!required && (!agent.cfg.emotes.effects || !agent.cfg.ui.quiet_admin_commands)) return;
-  await agent.withQuietCommands(true, async () => {
-    for (const c of commands) {
-      agent.bot.chat(c);
-      await sleep(60);
-    }
-  });
+  if (!required && (!agent.cfg.emotes.effects || !agent.quietCommands)) return;
+  for (const c of commands) {
+    agent.adminCommand(c);
+    await sleep(60);
+  }
 }
 
 export function createEmotes(agent) {

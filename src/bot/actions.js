@@ -5,9 +5,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { goals, makeMovements } from './createBot.js';
 import {
-  countItem, describeError, fight, findItem, findNearestBlock, findPlayer, fleeFrom, gotoGoal, gotoNear, isThreat,
+  countItem, describeError, findItem, findNearestBlock, findPlayer, fleeFrom, gotoGoal, gotoNear,
   nearestCreeper, nearestThreat, normalizeName, placeNearby, protectedReason, resolveBlockIds, resolveItem, summarizeItems, unknownName, Vec3,
 } from './helpers.js';
+import { canEngage, creeperPlan, fight } from './combat.js';
 import { describeStatus } from './status.js';
 import { eatBest } from './survival.js';
 import { accompanyLoop } from './companion.js';
@@ -95,9 +96,11 @@ function scanFor(agent, name) {
 // 传送到玩家身边（需要管理员权限）。
 async function teleportTo(agent, username) {
   const bot = agent.bot;
-  const replies = await agent.chat.capture(async () => bot.chat(`/tp ${bot.username} ${username}`), 900);
+  const replies = await agent.chat.capture(async () => agent.adminCommand(`tp ${bot.username} ${username}`), 900);
   agent.events.push('bot', { what: 'teleport', detail: `传送到 ${username} 身边` });
-  return replies.some((r) => /Teleported|传送/.test(r));
+  // 静默执行时没有回显，就看自己是不是已经在对方身边
+  const near = findPlayer(bot, username)?.entity?.position?.distanceTo(bot.entity.position) < 4;
+  return near || replies.some((r) => /Teleported|传送/.test(r));
 }
 
 function comeToPlayer(agent, name, ctx) {
@@ -382,11 +385,14 @@ function attackTarget(agent, { target, count }, ctx) {
     if (ctx.by?.source === 'brain' && ctx.by.owner === false) throw new Error('只有主人能让我攻击玩家');
   }
   const mobName = normalizeName(target);
+  // Boss（末影龙、凋灵）只在主人明确要求时打，打法见 combat.js；搜索范围更大、时间更长
+  const boss = ['ender_dragon', 'wither'].includes(mobName);
+  if (boss && ctx.by?.owner === false) throw new Error('打 Boss 要主人同意才行');
   let protectedCount = 0;
   const pick = () => {
     if (player) return findPlayer(bot, player.username)?.entity ?? null;
     let best = null;
-    let bestDist = 32;
+    let bestDist = boss || mobName === 'end_crystal' ? 160 : 32;
     protectedCount = 0;
     for (const e of Object.values(bot.entities)) {
       if (e === bot.entity || e.name !== mobName) continue;
@@ -413,7 +419,7 @@ function attackTarget(agent, { target, count }, ctx) {
     while (kills < want) {
       const e = pick();
       if (!e) break;
-      if (!(await fight(agent, e, task.signal, 60_000))) break;
+      if (!(await fight(agent, e, task.signal, boss ? 20 * 60_000 : 60_000, { boss }))) break;
       kills += 1;
     }
     if (!kills) throw new Error('没打倒（目标跑掉了或够不着）');
@@ -430,8 +436,10 @@ function guard(agent, { player }, ctx) {
     for (;;) {
       if (task.signal.aborted) throw abortError(task.signal);
       const center = username ? findPlayer(bot, username)?.entity?.position : home;
-      const creeper = nearestCreeper(bot, 4);
-      if (creeper) {
+      // 苦力怕：有把握（有弓、或拿着武器且血量健康）就打，否则躲开
+      const plan = creeperPlan(agent);
+      const creeper = nearestCreeper(bot, plan === 'bow' ? 12 : 4);
+      if (creeper && (plan === 'flee' || !canEngage(agent, creeper))) {
         await fleeFrom(agent, creeper, task.signal);
         following = null;
         continue;
@@ -439,7 +447,7 @@ function guard(agent, { player }, ctx) {
       if (center) {
         const assist = agent.assistTarget;
         agent.assistTarget = null;
-        const mob = (assist?.isValid && isThreat(agent, assist) ? assist : null) ?? nearestThreat(agent, center, 16);
+        const mob = creeper ?? (assist?.isValid && canEngage(agent, assist) ? assist : null) ?? nearestThreat(agent, center, 16, canEngage);
         if (mob) {
           try {
             await fight(agent, mob, task.signal, 30_000);
@@ -1015,7 +1023,7 @@ export const ACTIONS = [
   },
   {
     name: 'attack',
-    description: '攻击（长任务）：target 填生物英文 ID（如 zombie、skeleton、cow）或玩家名，count 是要打倒的数量。只在主人明确要求时攻击玩家。',
+    description: '攻击（长任务）：target 填生物英文 ID（如 zombie、skeleton、cow）或玩家名，count 是要打倒的数量。会自动用战斗技巧：跳劈暴击、盾牌格挡、打不过的近战怪放船困住、苦力怕打了就跑或用弓、恶魂反弹火球、烈焰人用雪球。Boss：target=ender_dragon（先射水晶再砍头）、wither、end_crystal，只在主人明确要求时打。只在主人明确要求时攻击玩家。',
     input_schema: schema({ target: str('生物英文 ID 或玩家名'), count: int('要打倒几个（1～20）') }),
     run: (agent, input, ctx) => attackTarget(agent, input, ctx),
   },

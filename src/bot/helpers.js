@@ -1,4 +1,4 @@
-// 各种技能共用的小工具：名称解析、寻路、放置、战斗、背包统计。
+// 各种技能共用的小工具：名称解析、寻路、放置、敌我判断、背包统计。
 import vec3 from 'vec3';
 import { goals, makeMovements } from './createBot.js';
 import { abortable, abortError, sleep, withTimeout } from '../util.js';
@@ -81,11 +81,11 @@ export function findNearestBlock(bot, names, maxDistance = 32) {
   return bot.findBlock({ matching: ids, maxDistance });
 }
 
-const HOSTILE = new Set(['zombie', 'husk', 'drowned', 'zombie_villager', 'skeleton', 'stray', 'bogged', 'creeper', 'spider', 'cave_spider',
+const HOSTILE = new Set(['zombie', 'husk', 'drowned', 'zombie_villager', 'skeleton', 'stray', 'bogged', 'parched', 'creeper', 'spider', 'cave_spider',
   'witch', 'slime', 'magma_cube', 'phantom', 'blaze', 'ghast', 'wither_skeleton', 'pillager', 'vindicator', 'evoker', 'ravager', 'vex',
-  'guardian', 'elder_guardian', 'shulker', 'silverfish', 'endermite', 'hoglin', 'zoglin', 'piglin_brute', 'breeze', 'creaking', 'illusioner']);
-// 这些不主动招惹：中立生物或打不过的。
-const NEVER_FIGHT = new Set(['warden', 'ender_dragon', 'wither', 'enderman', 'zombified_piglin', 'piglin']);
+  'guardian', 'elder_guardian', 'shulker', 'silverfish', 'endermite', 'hoglin', 'zoglin', 'piglin_brute', 'breeze', 'illusioner']);
+// 这些不主动招惹：中立生物、打不动的（嘎枝要先拆它的心脏）、Boss（只在主人明确要求时打）。
+const NEVER_FIGHT = new Set(['warden', 'ender_dragon', 'wither', 'enderman', 'zombified_piglin', 'piglin', 'creaking']);
 // 这些不能贴身打：苦力怕会爆炸（要躲开），飞在天上的够不着。
 const NO_MELEE = new Set(['creeper', 'ghast', 'phantom', 'happy_ghast']);
 
@@ -111,11 +111,16 @@ function inZone(pos, zone) {
     && pos.z >= Math.min(z1, z2) && pos.z <= Math.max(z1, z2) + 1;
 }
 
-// 不该打的生物：命名过的、坐在矿车或船里的、在禁战区里的（刷怪塔、农场等机器里的生物）。
+// 船和矿车（坐在里面的生物多半是机器里的）。
+export const isVehicleItemEntity = (entity) => /(^|_)(boat|raft|minecart)$/.test(entity?.name ?? '');
+
+// 不该打的生物：命名过的、坐在船或矿车里的、在禁战区里的（刷怪塔、农场等机器里的生物）。
+// 骑在别的生物身上的（蜘蛛骑士、鸡骑士、骷髅马骑士、劫掠兽骑手……）照打；猫娘自己放船困住的也照打。
 export function protectedReason(agent, entity) {
   const cfg = agent.cfg.behavior;
   if (cfg.never_attack_named && isNamed(agent.bot, entity)) return '挂了命名牌';
-  if (entity.vehicle) return '坐在载具里（可能是机器里的生物）';
+  const v = entity.vehicle;
+  if (v && isVehicleItemEntity(v) && !agent.myBoats?.has(v.id)) return '坐在船或矿车里（可能是机器里的生物）';
   const zones = cfg.no_attack_zones ?? [];
   if (zones.some((z) => Array.isArray(z) && z.length === 6 && inZone(entity.position, z))) return '在禁战区里';
   return null;
@@ -124,19 +129,25 @@ export function protectedReason(agent, entity) {
 // 可以主动去打的敌对生物：能近战、没被保护。
 export const isThreat = (agent, entity) => canMelee(entity) && !protectedReason(agent, entity);
 
-export function nearestThreat(agent, center, radius) {
+export function nearestThreat(agent, center, radius, test = isThreat) {
   const bot = agent.bot;
   let best = null;
   let bestDist = radius;
   for (const entity of Object.values(bot.entities)) {
-    if (entity === bot.entity || !isThreat(agent, entity)) continue;
+    if (entity === bot.entity || !test(agent, entity)) continue;
     const d = entity.position.distanceTo(center);
     if (d <= bestDist) {
       best = entity;
       bestDist = d;
     }
   }
-  return best;
+  return best && preferRider(agent, best, test);
+}
+
+// 骑乘组合先打骑手（骑手往往是输出，比如蜘蛛背上的骷髅）。
+export function preferRider(agent, entity, test = isThreat) {
+  const rider = (entity.passengers ?? []).find((p) => p !== agent.bot.entity && test(agent, p));
+  return rider ?? entity;
 }
 
 // 最近的可以近战的敌对生物（默认排除苦力怕等）。
@@ -279,9 +290,11 @@ export async function placeNearby(agent, itemName, signal) {
   throw new Error(`身边找不到能放 ${itemName} 的空地`);
 }
 
-// ── 战斗 ────────────────────────────────────────────────────
+// ── 战斗（具体打法见 combat.js）────────────────────────────
 
-const WEAPON_RANK = ['netherite_sword', 'diamond_sword', 'netherite_axe', 'iron_sword', 'diamond_axe', 'stone_sword', 'iron_axe', 'golden_sword', 'wooden_sword', 'stone_axe', 'golden_axe', 'wooden_axe', 'mace', 'trident'];
+const WEAPON_RANK = ['netherite_sword', 'diamond_sword', 'netherite_axe', 'iron_sword', 'diamond_axe', 'stone_sword', 'iron_axe', 'golden_sword',
+  'wooden_sword', 'stone_axe', 'golden_axe', 'wooden_axe', 'netherite_spear', 'diamond_spear', 'iron_spear', 'copper_spear', 'stone_spear',
+  'golden_spear', 'wooden_spear', 'mace', 'trident'];
 
 export async function equipBestWeapon(bot) {
   for (const name of WEAPON_RANK) {
@@ -294,50 +307,9 @@ export async function equipBestWeapon(bot) {
   return null;
 }
 
-async function equipShield(bot) {
-  const shield = bot.inventory.items().find((i) => i.name === 'shield');
-  const offhand = bot.inventory.slots[bot.getEquipmentDestSlot('off-hand')];
-  if (shield && offhand?.name !== 'shield') await bot.equip(shield, 'off-hand').catch(() => {});
-}
-
 export class LowHealthError extends Error {
   constructor() {
     super('血量太低，先撤退了');
     this.name = 'LowHealth';
   }
-}
-
-// 攻击一个实体直到它消失（死亡/跑远）或超时。血量过低时撤退并抛出 LowHealthError。
-export async function fight(agent, entity, signal, timeoutMs = 45_000) {
-  const bot = agent.bot;
-  const retreatAt = Number(agent.cfg.behavior.retreat_health ?? 8);
-  bot.pathfinder.setMovements(makeMovements(bot));
-  await equipBestWeapon(bot);
-  await equipShield(bot);
-  bot.pvp.attack(entity);
-  const until = Date.now() + timeoutMs;
-  let lowHealth = false;
-  try {
-    while (entity.isValid && Date.now() < until) {
-      if (retreatAt > 0 && bot.health <= retreatAt && bot.game?.gameMode === 'survival') {
-        lowHealth = true;
-        break;
-      }
-      if (entity.name === 'creeper' && entity.position.distanceTo(bot.entity.position) < 3.5) {
-        bot.pvp.forceStop();
-        await fleeFrom(agent, entity, signal);
-        break;
-      }
-      if (bot.pvp.target !== entity) bot.pvp.attack(entity);
-      await sleep(250, signal);
-    }
-  } finally {
-    bot.pvp.forceStop();
-  }
-  if (lowHealth) {
-    await fleeFrom(agent, entity, signal, { distance: 14, timeoutMs: 8000 });
-    agent.events.push('bot', { what: 'retreat', health: Math.round(bot.health), detail: `从 ${entity.name} 身边撤退` });
-    throw new LowHealthError();
-  }
-  return !entity.isValid;
 }

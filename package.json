@@ -11,7 +11,9 @@
     "setup": "node scripts/setup.js",
     "start": "node src/index.js",
     "ctl": "node src/cli.js",
-    "skin": "node scripts/skin-pack.js"
+    "skin": "node scripts/skin-pack.js",
+    "test": "node scripts/selftest.js",
+    "build-mod": "node mod/build.mjs"
   },
   "engines": {
     "node": ">=20"

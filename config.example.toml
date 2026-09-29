@@ -116,19 +116,29 @@ guard_death_drops = true
 idle_emotes = true
 
 [ui]
-# 准心对准猫娘时显示她的状态和背包（蹲下看她会在聊天栏画出背包格子）
-gaze = true
-gaze_distance = 6
+# 查看猫娘的背包：
+#   · 装了面板模组（mod/dist/njfu-neko-panel-*.jar，放进游戏的 mods 文件夹）：右键她打开人物面板，能直接拿放东西；
+#     Shift+右键打开功能菜单；她执行命令时也不会在管理员聊天栏里留下灰色提示。
+#   · 没装：发 #背包 / #菜单 弹出窗口查看（需要她有管理员权限；每次弹窗原版会给管理员们留一行灰色提示）。
 # #背包 弹出可视化窗口（服务器 1.21.6+ 且猫娘有管理员权限时可用）
 inventory_dialog = true
 # 游戏客户端 jar 的路径，用来读取物品贴图清单，让背包里显示物品图标。
 # 留空时会根据 mods.litematica_schematics 自动推断；例如 "D:/Game/.minecraft/versions/26.2/26.2.jar"
 client_jar = ""
-# 关掉“管理员命令广播”（游戏规则 log_admin_commands）。
-# 猫娘执行的命令默认会在所有管理员的聊天栏里显示一条灰色的 [NJFU_Neko: …]；
-# 打开这项后，猫娘上线时会把这条规则关掉，准心对准时的动作栏显示、特效等才不会刷屏。
-# 不打开的话，只有“蹲下 + 看着她”时私聊你一条状态。
-quiet_admin_commands = false
+
+[combat]
+# 跳劈：起跳后在下落时出手，打出暴击（伤害 ×1.5），也不会横扫误伤旁边的人
+crits = true
+# 用盾牌：箭和火球飞来、骷髅拉弓、苦力怕要炸时举盾，出手前放下（被斧头打掉后自动等冷却）
+shield = true
+# 打不过的近战怪（卫道士、凋灵骷髅、末影人等，或自己血少时）在中间放一条船把它困住再打；打完把船收回来
+boat_trap = true
+# 用弓箭（射苦力怕、恶魂、烈焰人、末影水晶等）
+bow = true
+# 拿着近战武器且血量健康时，苦力怕“打了就跑”：在它还不会膨胀的距离冲刺击退再退开
+creeper_melee = true
+# 血量低时吃金苹果（附魔金苹果只在打 Boss 时用）
+golden_apples = true
 
 [affection]
 # 好感度系统

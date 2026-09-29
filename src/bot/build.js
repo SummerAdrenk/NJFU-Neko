@@ -194,7 +194,7 @@ export async function buildBlocks(agent, blocks, { mode, signal, onProgress } = 
       const spec = b.spec.name === 'redstone_wire' && !['north', 'south', 'east', 'west'].some((d) => b.spec.props[d])
         ? { name: 'redstone_wire', props: { ...wireState(worldGet, b.pos), ...b.spec.props } }
         : b.spec;
-      const replies = await agent.chat.capture(async () => bot.chat(`/setblock ${b.pos.x} ${b.pos.y} ${b.pos.z} minecraft:${specText(spec)} replace`), done % 25 === 24 ? 250 : 40);
+      const replies = await agent.chat.capture(async () => agent.adminCommand(`setblock ${b.pos.x} ${b.pos.y} ${b.pos.z} minecraft:${specText(spec)} replace`), done % 25 === 24 ? 250 : 40);
       const bad = replies.find((r) => /Could not|Unknown|Incorrect|Invalid|Expected|无法|未知|错误/i.test(r));
       if (bad) failures.push(`${fmtPos(b.pos)} ${specText(spec)}：${bad}`);
       done += 1;

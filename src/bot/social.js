@@ -1,6 +1,7 @@
 // 社交与陪伴反应：帮主人打怪、保护主人、有人睡觉时问要不要一起睡、识别礼物、被玩家打时降好感。
 import { getLog } from '../log.js';
-import { fight, findPlayer, isThreat } from './helpers.js';
+import { findPlayer } from './helpers.js';
+import { canEngage, fight } from './combat.js';
 import { runAction } from './actions.js';
 
 const log = getLog('社交');
@@ -79,7 +80,7 @@ export class Social {
     }
     // 主人被怪打 → 保护主人
     if (entity.type === 'player' && entity.username && entity.username !== bot.username && agent.chat.isOwner(entity.username)) {
-      if (cfg.protect_owner && source && isThreat(agent, source) && this.canJoinFight()
+      if (cfg.protect_owner && source && canEngage(agent, source) && this.canJoinFight()
         && source.position.distanceTo(bot.entity.position) < 24) {
         log.info(`${source.name} 在打 ${entity.username}，去保护`);
         this.engage(source, `保护 ${entity.username}：${source.name}`);
@@ -88,7 +89,7 @@ export class Social {
     }
     // 主人在打怪 → 过去帮忙
     if (source?.type === 'player' && source.username !== bot.username && agent.chat.isOwner(source.username)) {
-      if (cfg.assist_owner && isThreat(agent, entity) && this.canJoinFight() && entity.position.distanceTo(bot.entity.position) < 24) {
+      if (cfg.assist_owner && canEngage(agent, entity) && this.canJoinFight() && entity.position.distanceTo(bot.entity.position) < 24) {
         log.info(`${source.username} 在打 ${entity.name}，去帮忙`);
         this.engage(entity, `帮 ${source.username} 打 ${entity.name}`);
       }

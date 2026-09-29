@@ -60,6 +60,12 @@ export class ChatHub {
   onSystem(bot, raw) {
     const text = raw.trim();
     if (!text) return;
+    // 面板模组发给猫娘的通知：有人右键了她（panel）或 Shift+右键（menu）
+    const ui = /^\[NJFU-UI\] (panel|menu) ([A-Za-z0-9_]{1,16})$/.exec(text);
+    if (ui) {
+      this.agent.emit('panel', { action: ui[1], player: ui[2] });
+      return;
+    }
     for (const tap of this.taps) tap(text);
     if (this.agent.identity.isEcho(text)) return;
     const m = SYSTEM_CHAT.exec(text);

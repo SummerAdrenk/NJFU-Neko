@@ -12,11 +12,13 @@ import { TaskManager } from './bot/tasks.js';
 import { ServerInfo } from './bot/serverInfo.js';
 import { Social } from './bot/social.js';
 import { installCompanion } from './bot/companion.js';
-import { installGaze } from './bot/gaze.js';
+import { installCombatSense } from './bot/combat.js';
 import { Duels } from './bot/duel.js';
 import { createEmotes, installInteractions } from './bot/emotes.js';
 import { TextureIndex } from './bot/textures.js';
 import { runAction } from './bot/actions.js';
+import { findPlayer } from './bot/helpers.js';
+import { showMenuDialog, supportsDialog } from './bot/inventoryView.js';
 import { MemoryStore } from './memory.js';
 import { Affection } from './affection.js';
 import { ChestIndex } from './chestIndex.js';
@@ -87,12 +89,24 @@ export class Agent extends EventEmitter {
     this.homeBed = null;
     this.assistTarget = null;
     this.worldSeed = null;
-    this.gameruleStyle = 'snake';
+    this.myBoats = new Set();
+    this.on('panel', (ev) => this.onPanel(ev));
   }
 
   say(text, opts) {
     if (!this.online) return 0;
     return this.identity.say(text, opts);
+  }
+
+  // 面板模组的通知：有人右键了她（模组已经打开了人物面板）或 Shift+右键（要功能菜单）。
+  onPanel({ action, player }) {
+    if (!this.online || !this.bot?.entity) return;
+    this.events.push('bot', { what: action === 'menu' ? 'menu_open' : 'panel_open', by: player });
+    const e = findPlayer(this.bot, player)?.entity;
+    if (e && Date.now() > (this.lookLockUntil ?? 0)) this.bot.lookAt(e.position.offset(0, e.eyeHeight ?? 1.6, 0)).catch(() => {});
+    if (action !== 'menu') return;
+    if (this.identity.opLevel >= 2 && supportsDialog(this)) showMenuDialog(this, player);
+    else this.say('我还没有管理员权限，弹不出菜单喵……发 #帮助 看看我能做什么吧', { to: player });
   }
 
   runAction(name, input, ctx) {
@@ -104,29 +118,20 @@ export class Agent extends EventEmitter {
     return this.bot?.registry ?? (this._registry ??= mcDataLoader(this.cfg.viaproxy.client_version));
   }
 
-  // 管理员命令广播（其他管理员聊天栏里灰色的 [NJFU_Neko: …]）。新版规则名是 log_admin_commands，旧版是 logAdminCommands。
-  async adminBroadcast(value) {
-    if (!this.online || this.identity.opLevel < 2) return null;
-    const rule = this.gameruleStyle === 'camel' ? 'logAdminCommands' : 'log_admin_commands';
-    const replies = await this.chat.capture(async () => this.bot.chat(`/gamerule ${rule}${value == null ? '' : ` ${value}`}`), 700);
-    if (this.gameruleStyle === 'snake' && replies.some((r) => /Unknown|Incorrect|Expected|未知/i.test(r))) {
-      this.gameruleStyle = 'camel';
-      return this.adminBroadcast(value);
-    }
-    return replies.join(' ');
+  // 装了面板模组（mod/ 目录）时，服务器会给猫娘一个 /njfu quiet 命令：用它执行管理员命令就不会在其他管理员的聊天栏里
+  // 留下灰色的 [NJFU_Neko: …] 提示。没装时只能照常执行（原版的广播只能靠关掉 send_command_feedback 来避免，那会影响所有人）。
+  get quietCommands() {
+    return this.serverInfo.allCommands.includes('njfu');
   }
 
-  // 批量执行命令时临时关掉管理员命令广播，免得刷屏，结束后恢复原状。
+  adminCommand(command) {
+    const c = String(command).trim().replace(/^\/+/, '');
+    this.bot.chat(this.quietCommands ? `/njfu quiet ${c}` : `/${c}`);
+  }
+
+  // 兼容旧调用：批量执行命令。静默与否由 adminCommand 决定，这里直接执行。
   async withQuietCommands(enabled, fn) {
-    if (!enabled || this.cfg.ui.quiet_admin_commands || this.identity.opLevel < 2) return fn();
-    const before = await this.adminBroadcast(null);
-    const wasOn = !/false/i.test(before ?? '');
-    if (wasOn) await this.adminBroadcast(false);
-    try {
-      return await fn();
-    } finally {
-      if (wasOn && this.online) await this.adminBroadcast(true);
-    }
+    return fn();
   }
 
   emergencyStop(from, whisperTo) {
@@ -212,7 +217,7 @@ export class Agent extends EventEmitter {
     this.social.attach(bot);
     installSurvival(this, bot);
     installCompanion(this, bot);
-    installGaze(this, bot);
+    installCombatSense(this, bot);
     installInteractions(this, bot);
 
     let spawned = false;

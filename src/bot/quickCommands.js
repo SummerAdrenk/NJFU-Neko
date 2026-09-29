@@ -3,7 +3,7 @@ import { snapshot } from './status.js';
 import { runAction } from './actions.js';
 import { playMiniGame } from './emotes.js';
 import { bar, cmd, dot, gap, label, sendPanel, title, value } from './ui.js';
-import { sendChatInventory, showInventoryDialog, supportsDialog } from './inventoryView.js';
+import { sendChatInventory, showInventoryDialog, showMenuDialog, supportsDialog } from './inventoryView.js';
 
 const ask = (text) => ({ text, color: 'white', suggest: text, hover: '点击填入聊天框，改一改再发送' });
 const topic = (name) => ({ text: `[${name}]`, color: 'gold', suggest: name === '决斗' ? '#帮助 决斗' : `#${name}`, hover: `查看「${name}」的说明` });
@@ -14,16 +14,17 @@ const HELP = {
     title('NJFU智慧猫娘 · 使用说明'),
     [label('叫我：'), value('聊天里带上 '), value('「猫娘」', 'yellow'), value(' 就行，私聊我也可以')],
     [label('例如：'), ask('猫娘过来'), dot, ask('猫娘去砍 20 个木头'), dot, ask('猫娘附近哪有村庄')],
+    [label('面板：'), value('右键我', 'yellow'), label(' 打开我的背包（能拿能放），'), value('Shift+右键', 'yellow'), label(' 打开功能菜单（要装面板模组）；也可以发 '), cmd('#菜单', '弹出功能菜单')],
     [label('快捷：'), cmd('#状态', '我的生命、位置、在做什么'), gap, cmd('#背包', '我背包里的东西'), gap, cmd('#好感', '我对你的好感度'), gap, cmd('#任务', '我正在做的事')],
     [label('　　　'), cmd('#过来', '走到你身边'), gap, cmd('#跟着', '一直跟着你（离远了会传送）'), gap, cmd('#停', '停下手上的事'), gap, cmd('#回家', '回到我的床边')],
-    [label('更多：'), topic('互动'), gap, topic('游戏'), gap, topic('决斗'), gap, topic('干活'), gap, topic('红石'), gap, topic('其他')],
+    [label('更多：'), topic('互动'), gap, topic('游戏'), gap, topic('决斗'), gap, topic('战斗'), gap, topic('干活'), gap, topic('红石'), gap, topic('其他')],
   ],
   互动: [
     title('互动'),
     [cmd('#摸头'), gap, cmd('#抱抱'), gap, cmd('#挥手'), gap, cmd('#跳舞'), gap, cmd('#转圈'), gap, cmd('#喵')],
     [cmd('#坐下'), gap, cmd('#起来')],
     [label('蹲在我旁边看着我 = '), value('摸头', 'yellow')],
-    [label('准心对着我再蹲下 = '), value('看我的背包', 'yellow')],
+    [label('右键我 = '), value('打开我的背包面板', 'yellow'), label('　Shift+右键 = '), value('功能菜单', 'yellow'), label('（要装面板模组）')],
     [label('扔木棍或骨头给我 = '), value('我会叼回来还给你', 'yellow')],
     [label('送我礼物（鱼、花、蛋糕…）会加好感，'), cmd('#好感', '查看好感度'), label(' 查看')],
   ],
@@ -37,6 +38,15 @@ const HELP = {
     [cmd('#决斗', '普通难度'), gap, cmd('#决斗 简单'), gap, cmd('#决斗 困难', '我会走位、跳劈、用盾')],
     [label('倒计时后开打，默认'), value('切磋', 'yellow'), label('：打到只剩几颗心就停')],
     [cmd('#认输'), gap, cmd('#战绩', '你对我的胜负记录')],
+  ],
+  战斗: [
+    title('战斗（她会自己用这些技巧）'),
+    [label('近战：'), value('跳劈暴击、蓄满再打、保持距离、身边有人时不横扫', 'white')],
+    [label('盾牌：'), value('箭和火球飞来、骷髅拉弓、苦力怕要炸时举盾，出手前放下', 'white')],
+    [label('困怪：'), value('打不过的近战怪（卫道士、凋灵骷髅、末影人…）放船困住再打，不打船，打完收船', 'white')],
+    [label('专门打法：'), value('苦力怕打了就跑或用弓，恶魂反弹火球，烈焰人用雪球，幻翼等俯冲', 'white')],
+    [label('骑乘怪：'), value('蜘蛛骑士、鸡骑士等先打骑手；船和矿车里的怪不打（多半是机器）', 'white')],
+    [label('Boss：'), ask('猫娘去打末影龙'), dot, ask('猫娘打凋灵'), label('（要主人同意）')],
   ],
   干活: [
     title('干活（直接用中文吩咐我）'),
@@ -71,7 +81,15 @@ export function createQuickCommands(agent) {
   const commands = [
     { names: ['帮助', 'help', '?', '？', '说明'], run: (player, args) => ({ panel: HELP[args[0] ?? ''] ?? HELP[''] }) },
     // 直接发分类名也能看对应的说明（#决斗 是开始决斗，说明用 #帮助 决斗）
-    { names: ['互动', '游戏', '小游戏', '干活', '红石', '其他'], run: (player, args, name) => ({ panel: HELP[name === '小游戏' ? '游戏' : name] }) },
+    { names: ['互动', '游戏', '小游戏', '战斗', '干活', '红石', '其他'], run: (player, args, name) => ({ panel: HELP[name === '小游戏' ? '游戏' : name] }) },
+    {
+      names: ['菜单', 'menu'],
+      run: (player) => {
+        if (agent.identity.opLevel < 2 || !supportsDialog(agent)) return ['弹出菜单需要管理员权限（服务器 1.21.6 以上）喵，先发 #帮助 看看吧'];
+        showMenuDialog(agent, player.name);
+        return [];
+      },
+    },
     {
       names: ['状态', 'status', '状况'],
       run: (player) => {

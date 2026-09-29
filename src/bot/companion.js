@@ -2,8 +2,9 @@
 // 缺装备/缺吃的时去箱子里拿；离得太远就传送过去。
 import { goals, makeMovements } from './createBot.js';
 import {
-  countItem, fight, findPlayer, fleeFrom, isThreat, nearestCreeper, nearestThreat, summarizeItems,
+  countItem, findPlayer, fleeFrom, nearestCreeper, nearestThreat, summarizeItems,
 } from './helpers.js';
+import { canEngage, creeperPlan, fight } from './combat.js';
 import { pickFood } from './survival.js';
 import { getLog } from '../log.js';
 import { abortError, sleep } from '../util.js';
@@ -35,16 +36,17 @@ export async function accompanyLoop(agent, username, task, { minDist = 2, maxDis
     }
     const e = player.entity;
 
-    // 1. 危险处理：躲苦力怕，打主人在打的 / 在打主人的怪，打靠近的怪
-    const creeper = nearestCreeper(bot, 4);
-    if (creeper) {
+    // 1. 危险处理：苦力怕（有把握就打，没把握就躲），打主人在打的 / 在打主人的怪，打靠近的怪
+    const plan = creeperPlan(agent);
+    const creeper = nearestCreeper(bot, plan === 'bow' ? 10 : 4);
+    if (creeper && (plan === 'flee' || !canEngage(agent, creeper))) {
       await fleeFrom(agent, creeper, task.signal);
       following = null;
       continue;
     }
     const assist = agent.assistTarget;
     agent.assistTarget = null;
-    const threat = (assist?.isValid && isThreat(agent, assist) ? assist : null) ?? nearestThreat(agent, bot.entity.position, 4);
+    const threat = creeper ?? (assist?.isValid && canEngage(agent, assist) ? assist : null) ?? nearestThreat(agent, bot.entity.position, 4, canEngage);
     if (threat) {
       try {
         await fight(agent, threat, task.signal, 30_000);
@@ -62,7 +64,7 @@ export async function accompanyLoop(agent, username, task, { minDist = 2, maxDis
       lastTp = Date.now();
       bot.pathfinder.setGoal(null);
       following = null;
-      await agent.chat.capture(async () => bot.chat(`/tp ${bot.username} ${username}`), 800);
+      agent.adminCommand(`tp ${bot.username} ${username}`);
       agent.events.push('bot', { what: 'teleport', detail: `离 ${username} 太远，传送过去` });
       await sleep(1000, task.signal);
       continue;
@@ -94,7 +96,7 @@ export async function accompanyLoop(agent, username, task, { minDist = 2, maxDis
       bot.pathfinder.setMovements(makeMovements(bot));
       bot.pathfinder.setGoal(new goals.GoalNear(p.x + Math.cos(angle) * r, p.y, p.z + Math.sin(angle) * r, 1));
     }
-    if (!bot.pathfinder.isMoving()) {
+    if (!bot.pathfinder.isMoving() && Date.now() > (agent.lookLockUntil ?? 0)) {
       bot.lookAt(e.position.offset(0, e.eyeHeight ?? 1.6, 0)).catch(() => {});
     }
     await sleep(400, task.signal);
@@ -125,12 +127,15 @@ export function installCompanion(agent, bot) {
   let lastAskFood = 0;
   let busy = false;
 
+  const triedItems = new Map();
   async function pickupNearby() {
     const me = bot.entity.position;
     const item = Object.values(bot.entities).find((e) => e.name === 'item' && e.position.distanceTo(me) < 5
-      && !agent.social.isOwnDrop(e.id)
+      && !agent.social.isOwnDrop(e.id) && (triedItems.get(e.id) ?? 0) < 2
       && !Object.values(bot.players).some((p) => p.entity && p.username !== bot.username && p.entity.position.distanceTo(e.position) < 1.5));
     if (!item || bot.inventory.emptySlotCount() === 0) return false;
+    triedItems.set(item.id, (triedItems.get(item.id) ?? 0) + 1);
+    if (triedItems.size > 200) triedItems.clear();
     await agent.tasks.run('pickup', '捡东西', async (task) => {
       bot.pathfinder.setMovements(makeMovements(bot));
       await Promise.race([
@@ -157,6 +162,15 @@ export function installCompanion(agent, bot) {
       const w = agent.chestIndex.find((n) => /_sword$/.test(n), bot.entity.position).filter((c) => c.distance < 48)
         .sort((a, b) => tierOf(a.name) - tierOf(b.name))[0];
       if (w) want.push({ ...w, take: 1 });
+    }
+    // 打架用的：盾牌、弓和箭、一条船（困怪用）
+    const has = (re) => bot.inventory.items().some((i) => re.test(i.name))
+      || re.test(bot.inventory.slots[bot.getEquipmentDestSlot('off-hand')]?.name ?? '');
+    const nearest = (re) => agent.chestIndex.find((n) => re.test(n), bot.entity.position).filter((c) => c.distance < 48)[0];
+    for (const [re, take] of [[/^shield$/, 1], [/^bow$/, 1], [/^arrow$/, 32], [/^oak_boat$|_boat$/, 1]]) {
+      if (has(re) || (re.source === '^arrow$' && !has(/^bow$/) && !want.some((w) => w.name === 'bow'))) continue;
+      const found = nearest(re);
+      if (found) want.push({ ...found, take: Math.min(take, found.count) });
     }
     if (!pickFood(bot)) {
       const f = agent.chestIndex.find((n) => Boolean(bot.registry.foodsByName?.[n]) && !/rotten|spider_eye|poisonous|pufferfish/.test(n), bot.entity.position)
@@ -185,17 +199,28 @@ export function installCompanion(agent, bot) {
     return true;
   }
 
+  function calm() {
+    const me = bot.entity.position;
+    if (nearestThreat(agent, me, 10, canEngage)) return false;
+    const owner = companionTarget(agent);
+    const e = owner ? findPlayer(bot, owner)?.entity : null;
+    return !e || e.position.distanceTo(me) < 12;
+  }
+
   async function tick() {
     if (!agent.online || !bot.entity || bot.isSleeping || busy) {
       idleSince = Date.now();
       return;
     }
-    if (agent.tasks.current) {
+    const cur = agent.tasks.current;
+    if (cur && cur.name !== 'companion') {
       idleSince = Date.now();
       return;
     }
     const idleMs = Date.now() - idleSince;
     if (idleMs < 3000) return;
+    // 陪伴中也会顺手捡东西、去箱子拿装备，但身边有怪或主人走远时不分心
+    if (cur && (agent.fighting || !calm())) return;
     busy = true;
     try {
       if (cfg.pickup_items && await pickupNearby()) return;
@@ -203,7 +228,7 @@ export function installCompanion(agent, bot) {
         lastGear = Date.now();
         if (await gearUp()) return;
       }
-      if (cfg.companion) {
+      if (cfg.companion && !cur) {
         const owner = companionTarget(agent);
         if (owner) {
           agent.tasks.run('companion', `陪着 ${owner}`, (task) => accompanyLoop(agent, owner, task, {
