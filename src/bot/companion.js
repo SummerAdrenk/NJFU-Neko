@@ -2,9 +2,9 @@
 // 缺装备/缺吃的时去箱子里拿；离得太远就传送过去。
 import { goals, makeMovements } from './createBot.js';
 import {
-  countItem, findNearestBlock, findPlayer, fleeFrom, isAliveEntity, nearestCreeper, nearestThreat, placeAt, protectedReason, summarizeItems, Vec3,
+  countItem, findNearestBlock, findPlayer, fleeFrom, isAliveEntity, nearestCreeper, nearestThreat, protectedReason, summarizeItems,
 } from './helpers.js';
-import { chestPartner, craftCore, smeltCore, withChest } from './actions.js';
+import { chestPartner, smeltCore, withChest } from './actions.js';
 import { canEngage, creeperPlan, fight, outnumbered, pickTarget, retreatFromCrowd } from './combat.js';
 import { pickFood } from './survival.js';
 import { freeSeat, isPortalNear, mountEntity, usePortal } from './movement.js';
@@ -256,62 +256,6 @@ export function installCompanion(agent, bot) {
     return true;
   }
 
-  // 在家周围插火把：家（睡过的床）24 格内、露天的天然地面上、完全没有光的地方（亮度 0 会刷怪），
-  // 一轮最多 4 个，火把之间隔开（一个火把能照亮周围十来格）。火把不够时用煤/木炭和木棍做。
-  const NATURAL = /^(grass_block|dirt|coarse_dirt|podzol|rooted_dirt|stone|andesite|diorite|granite|tuff|deepslate|sand|red_sand|gravel|mycelium|moss_block|mud|packed_mud|snow_block|terracotta|calcite)$/;
-  let lastLight = 0;
-  async function lightUp() {
-    const home = agent.homeBed;
-    if (cfg.light_up === false || !home || Date.now() - lastLight < 90_000) return false;
-    if (bot.entity.position.distanceTo(home) > 48) return false;
-    lastLight = Date.now();
-    const spots = [];
-    for (let dx = -24; dx <= 24; dx += 3) {
-      for (let dz = -24; dz <= 24; dz += 3) {
-        if (dx * dx + dz * dz > 24 * 24) continue;
-        for (let y = home.y + 8; y >= home.y - 8; y--) {
-          const ground = bot.blockAt(new Vec3(home.x + dx, y, home.z + dz));
-          if (!ground || ground.boundingBox !== 'block') continue;
-          const air = bot.blockAt(ground.position.offset(0, 1, 0));
-          const air2 = bot.blockAt(ground.position.offset(0, 2, 0));
-          if (NATURAL.test(ground.name) && air?.name === 'air' && air2?.boundingBox !== 'block' && (air.skyLight ?? 0) >= 12 && (air.light ?? 1) === 0) {
-            spots.push(air.position);
-          }
-          break;
-        }
-      }
-    }
-    if (!spots.length) return false;
-    spots.sort((a, b) => a.distanceTo(home) - b.distanceTo(home));
-    const chosen = [];
-    for (const p of spots) {
-      if (chosen.length >= 4) break;
-      if (chosen.every((c) => c.distanceTo(p) > 9)) chosen.push(p);
-    }
-    let torches = countItem(bot, 'torch');
-    if (torches < chosen.length && bot.inventory.items().some((i) => /^(coal|charcoal)$/.test(i.name))) {
-      await craftCore(agent, bot.registry.itemsByName.torch, 8, null).catch(() => {});
-      torches = countItem(bot, 'torch');
-    }
-    if (!torches) return false;
-    await agent.tasks.run('light', `在家附近插火把（${Math.min(torches, chosen.length)} 处太黑）`, async (task) => {
-      let placed = 0;
-      for (const p of chosen.slice(0, torches)) {
-        const torch = bot.inventory.items().find((i) => i.name === 'torch');
-        if (!torch) break;
-        try {
-          await placeAt(agent, p, torch, task.signal);
-          placed += 1;
-        } catch (err) {
-          if (task.signal.aborted) throw err;
-        }
-      }
-      if (placed) agent.events.push('bot', { what: 'light', detail: `在家附近太黑的地方插了 ${placed} 个火把` });
-      return placed ? `插了 ${placed} 个火把` : '一个也没插上';
-    }, { waitMs: 0, by: { source: 'self' } });
-    return true;
-  }
-
   const triedItems = new Map();
   async function pickupNearby() {
     const me = bot.entity.position;
@@ -414,7 +358,6 @@ export function installCompanion(agent, bot) {
         if (await gearUp()) return;
       }
       if (cfg.auto_eat && await seekFood()) return;
-      if (await lightUp()) return;
       // 平时也顺手翻翻附近没看过的箱子（每 3 分钟一轮，一轮最多 8 个），缺东西时知道去哪拿
       if (cfg.use_chests && cfg.survey_chests !== false && Date.now() - lastSurvey > 180_000) {
         lastSurvey = Date.now();

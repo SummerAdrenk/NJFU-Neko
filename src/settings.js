@@ -18,7 +18,6 @@ export const SETTINGS = [
   { key: '问睡觉', path: 'behavior.ask_to_sleep', type: 'bool', desc: '有人上床时问要不要一起睡' },
   { key: '垫方块', path: 'behavior.scaffold', type: 'bool', desc: '走路时搭桥、垫高' },
   { key: '防摔', path: 'behavior.fall_safety', type: 'bool', desc: '落地水、鞘翅、落地船' },
-  { key: '插火把', path: 'behavior.light_up', type: 'bool', desc: '在家（床）周围太黑的露天地面插火把，防止刷怪' },
   { key: '传送距离', path: 'behavior.teleport_distance', type: 'int', min: 0, max: 256, desc: '离主人多远就传送过去（0 关闭）' },
   { key: '撤退血量', path: 'behavior.retreat_health', type: 'int', min: 0, max: 19, desc: '血量低于这个值就撤退' },
   { key: '索敌范围', path: 'combat.engage_radius', type: 'int', min: 4, max: 96, desc: '多远的怪会主动去打（默认 64 格）' },

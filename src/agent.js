@@ -251,7 +251,7 @@ export class Agent extends EventEmitter {
       this.onSpawn(bot);
     });
     bot.on('kicked', (reason) => {
-      const text = componentText(reason) || String(reason);
+      const text = componentText(reason) || (typeof reason === 'string' ? reason : JSON.stringify(reason));
       log.warn(`被服务器踢出：${text}`);
       this.events.push('connection', { state: 'kicked', detail: text });
     });
