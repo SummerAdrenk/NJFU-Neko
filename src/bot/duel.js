@@ -12,9 +12,11 @@ import { duelKit, duelLevel, parseDuelLevel } from './duelKits.js';
 import { absorption, DuelTactics } from './duelTactics.js';
 import { usePotion } from './potions.js';
 import { eatBest } from './survival.js';
-import { RUNTIME } from '../paths.js';
+import { DUEL_PENDING_FILE, RUNTIME } from '../paths.js';
+import { getLog } from '../log.js';
 import { abortError, sleep } from '../util.js';
 
+const log = getLog('决斗');
 const STATS_FILE = path.join(RUNTIME, 'duels.json');
 const LOCK_HP = 1;
 const WEAPON_DAMAGE = { netherite_sword: 8, diamond_sword: 7, iron_sword: 6, stone_sword: 5, golden_sword: 4, wooden_sword: 4, netherite_axe: 10, diamond_axe: 9, iron_axe: 9, stone_axe: 9, golden_axe: 7, wooden_axe: 7, mace: 6, trident: 9 };
@@ -53,6 +55,44 @@ export class Duels {
     return s ? `${player} 对猫娘的战绩：${s.win} 胜 ${s.lose} 负 ${s.draw} 平` : `${player} 还没和猫娘决斗过`;
   }
 
+  // 决斗要收尾的事（锁血、保管的背包、放下的方块）记到磁盘：中途断线的话，重新上线时补上
+  savePending() {
+    const a = this.active;
+    const data = a ? { player: a.player, bot: this.agent.bot?.username, locked: Boolean(a.locked), stashed: a.stashed ?? [], placed: a.placed ?? [], at: Date.now() } : {};
+    try {
+      fs.mkdirSync(RUNTIME, { recursive: true });
+      fs.writeFileSync(DUEL_PENDING_FILE, `${JSON.stringify(data)}\n`);
+    } catch {
+      // 记不下来也不影响决斗
+    }
+  }
+
+  // 上线时：上次决斗没收完尾（断线了）就补上——解除锁血、把保管的背包还回去、清掉放下的方块
+  async recover() {
+    const agent = this.agent;
+    const bot = agent.bot;
+    let p = null;
+    try {
+      p = JSON.parse(fs.readFileSync(DUEL_PENDING_FILE, 'utf8'));
+    } catch {
+      return;
+    }
+    if (!p?.player || this.active || agent.identity.opLevel < 2) return;
+    if (p.locked) agent.adminCommand(`njfu duel off ${p.player} ${p.bot ?? bot.username}`);
+    for (const who of p.stashed ?? []) {
+      await agent.chat.capture(async () => bot.chat(`/njfu stash restore ${who}`), 1200).catch(() => {});
+    }
+    for (const b of p.placed ?? []) agent.adminCommand(`setblock ${b.x} ${b.y} ${b.z} air`);
+    if ((p.stashed ?? []).length) {
+      await bot.armorManager?.equipAll?.();
+      await equipBestWeapon(bot);
+    }
+    agent.say(`刚才和 ${p.player} 的决斗断开了，装备都换回来了，东西原样还给你们了喵`);
+    log.info(`补上了中断的决斗收尾（${p.player}）`);
+    this.active = null;
+    this.savePending();
+  }
+
   surrender(player) {
     if (!this.isDueling(player)) return false;
     this.active.surrendered = true;
@@ -72,7 +112,7 @@ export class Duels {
     const level = parseDuelLevel(difficulty) ?? duelLevel('normal');
     const username = p.username;
     return agent.tasks.run('duel', `和 ${username} 决斗（${level.name}）`, async (task) => {
-      this.active = { player: username, surrendered: false, placed: [], fluids: [] };
+      this.active = { player: username, surrendered: false, placed: [], fluids: [], stashed: [] };
       const njfu = agent.serverInfo?.njfuCommands ?? [];
       const locked = njfu.includes('duel');
       const stash = njfu.includes('stash');
@@ -80,6 +120,7 @@ export class Duels {
         agent.adminCommand(`njfu duel on ${username} ${bot.username}`);
         this.active.locked = true;
       }
+      this.savePending();
       const kit = duelKit(level, { fire: locked });
       const worn = { me: null, them: null };
       try {
@@ -109,6 +150,7 @@ export class Duels {
         }
         this.last = { player: username, endedAt: Date.now() };
         this.active = null;
+        this.savePending();
         if (bot.usingHeldItem) bot.deactivateItem();
         bot.clearControlStates();
         bot.pathfinder.setGoal(null);
@@ -128,6 +170,8 @@ export class Duels {
           ? `${target} 上次保管的东西还没还（在存档的 njfu_neko_stash 文件夹里），这次先不换装备`
           : `没能保管 ${target} 的背包，这次先不换装备`);
       }
+      this.active?.stashed.push(target);
+      this.savePending();
       for (const k of kit) {
         agent.adminCommand(`item replace entity ${target} ${k.slot} with ${k.item}`);
         await sleep(60);
@@ -205,6 +249,7 @@ export class Duels {
     const tactics = new DuelTactics(agent, fighter, level, { locked });
     this.active.placed = tactics.placed;
     this.active.fluids = fighter.placedFluids;
+    tactics.onPlace = () => this.savePending();
     if (level.shield) await fighter.equipShield();
     // 和平时打玩家用同一套近身技巧（战斗模块的 pvpStep），难度决定用哪些；岩浆只在有模组锁血时用
     const style = {

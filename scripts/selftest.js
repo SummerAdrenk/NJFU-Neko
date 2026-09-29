@@ -266,6 +266,9 @@ const junkNames = junk.junkPlan(junkBot).map((p) => `${p.item.name}:${p.count}`)
 check('扔垃圾 该扔的', junkNames === 'diorite:30,leather_helmet:1,rotten_flesh:5,wheat_seeds:24,wooden_pickaxe:1');
 check('扔垃圾 不扔礼物', !junk.junkPlan(junkBot, { gifts: new Set(['leather_helmet']) }).some((p) => p.item.name === 'leather_helmet'));
 
+const createBotMod = await import('../src/bot/createBot.js');
+check('鞘翅 展开的动作名（新版本 start_fall_flying，不能用 mineflayer 的旧名字）', createBotMod.fallFlyingAction(registry) === 'start_fall_flying');
+
 // 7. 面板模组通知、OpenAI 兼容接口、打码
 const chatMod = await import('../src/bot/chat.js');
 check('面板通知 菜单按钮', JSON.stringify(chatMod.parseUiNotice('[NJFU-UI] do Steve pet')) === JSON.stringify({ action: 'do', player: 'Steve', what: 'pet' }));

@@ -333,6 +333,8 @@ export class Agent extends EventEmitter {
     log.info(`✓ 已进入世界：${where}`);
     this.events.push('connection', { state: 'online', server: this.target?.label, serverVersion: this.target?.serverVersion, position: where });
     this.emit('online');
+    // 上次决斗中途断线了：等命令树、权限都到了，再补上收尾（还背包、解除锁血）
+    setTimeout(() => this.duels?.recover().catch((err) => log.warn(`决斗收尾没补上：${err.message}`)), 4000);
   }
 
   onEnd(bot, reason, wasOnline) {

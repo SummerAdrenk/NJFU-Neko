@@ -114,6 +114,7 @@ export class DuelTactics {
     await holdItem(bot, item);
     await Promise.race([bot.placeBlock(bot.blockAt(ground), UP).catch(() => {}), sleep(1000)]);
     this.f.lastSwap = Date.now();
+    this.onPlace?.();
     return bot.blockAt(pos);
   }
 

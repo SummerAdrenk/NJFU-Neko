@@ -28,7 +28,28 @@ export function createBot(cfg, target) {
   bot.loadPlugin(pvpPkg.plugin);
   if (cfg.behavior.auto_armor) bot.loadPlugin(armorManager);
   bot.nekoScaffold = cfg.behavior.scaffold !== false;
+  bot.elytraFly = () => startGliding(bot);
   return bot;
+}
+
+// “展开鞘翅”的动作：新版本（1.21.2+）叫 start_fall_flying，mineflayer 还在发旧名字 start_elytra_flying（或旧编号 8），
+// 服务器解不开这个包就会把人踢掉。按当前协议里的名字发。
+export function fallFlyingAction(registry) {
+  const def = registry?.protocol?.play?.toServer?.types?.packet_entity_action;
+  const field = Array.isArray(def) ? def[1]?.find?.((f) => f.name === 'actionId') : null;
+  const mappings = Array.isArray(field?.type) && field.type[0] === 'mapper' ? field.type[1]?.mappings : null;
+  if (!mappings) return 8;
+  return Object.values(mappings).find((v) => /fall_flying|elytra/.test(v)) ?? null;
+}
+
+async function startGliding(bot) {
+  if (bot.entity.elytraFlying) throw new Error('已经在飞了');
+  if (bot.entity.onGround) throw new Error('在地上飞不起来，要先跳起来');
+  if (bot.entity.isInWater) throw new Error('在水里飞不起来');
+  if (bot.inventory.slots[bot.getEquipmentDestSlot('torso')]?.name !== 'elytra') throw new Error('没穿鞘翅');
+  const actionId = fallFlyingAction(bot.registry);
+  if (actionId == null) throw new Error('这个版本不知道怎么展开鞘翅');
+  bot._client.write('entity_action', { entityId: bot.entity.id, actionId, jumpBoost: 0 });
 }
 
 // 寻路时绝不挖开的方块：大多是玩家建筑里才有的东西。
