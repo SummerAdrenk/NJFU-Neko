@@ -226,7 +226,8 @@ chunkbase_platform = ""
 # 谁来当猫娘的“大脑”：
 #   "api"         独立运行，直接调用 Claude API（需要下面 [brain.api] 的认证，按用量计费）
 #   "openai"      独立运行，调用 OpenAI 兼容接口：GPT、DeepSeek，或者通义千问、Kimi、本地 Ollama 等（见 [brain.openai]）
-#   "claude-code" 由 Claude Code 会话来思考和操作（可以用 Claude 官网订阅账号，见 CLAUDE.md）
+#   "claude-code" 用 Claude Code 思考（Claude 官网订阅账号就行，不用 API Key）：开着 Claude Code 会话时由它接管，
+#                 没开时猫娘自己调用命令行版 Claude Code 回话（见 [brain.claude_code]）
 #   "none"        只挂机，不思考不回话（快捷命令、自动行为照常工作）
 mode = "api"
 
@@ -288,6 +289,30 @@ recent_chat_lines = 20
 max_episodes_per_hour = 120
 # 后台任务完成后，最多连续自动续做几步（有人说话会重新计数）
 max_auto_steps = 8
+
+[brain.claude_code]
+# mode = "claude-code" 时用。开着 Claude Code 会话（它用 watch 在监听）时由它接管猫娘；
+# 没开时（直接 npm start / start.bat），猫娘自己调用本机的命令行版 Claude Code（claude -p）想一轮，用你登录的 Claude 账号。
+# 那一轮的 Claude 只有猫娘的动作工具（说话、走路、采集……），碰不到电脑上的文件和命令；不是主人的玩家也用不了只替主人做的事。
+# 第一次用要在终端登录一次：claude auth login（启动时控制台会提示完整命令）
+# 没开会话时也自己回话；false = 只等 Claude Code 会话（没开时在游戏里提示一句）
+headless = true
+# 命令行 claude 的位置，留空自动找（PATH、~/.local/bin、Claude 桌面版自带的、npm 全局安装的）
+cli = ""
+# 模型："sonnet" 反应快、省订阅额度（推荐）/ "opus" 更聪明但更慢 / 留空用命令行默认的
+model = "sonnet"
+# 思考力度："low" 反应最快（推荐，聊天够用）/ "medium" / "high"；留空用默认
+effort = "low"
+# 一轮最多调用多少次工具
+max_turns = 12
+# 一轮最多想多少秒
+timeout_seconds = 180
+# 给大脑看最近多少条聊天
+recent_chat_lines = 20
+# 每小时最多自己想多少次（防止刷屏、用光订阅额度）
+max_episodes_per_hour = 60
+# 后台任务完成后，最多连续自动续做几步（有人说话会重新计数）
+max_auto_steps = 6
 
 [commands]
 # 是否允许执行 / 命令

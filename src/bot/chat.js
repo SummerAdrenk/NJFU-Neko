@@ -2,6 +2,7 @@
 import { getLog } from '../log.js';
 import { componentText, truncate } from '../util.js';
 import { createQuickCommands } from './quickCommands.js';
+import { answerBuiltin, builtinQuery } from './finder.js';
 
 const log = getLog('聊天');
 
@@ -136,6 +137,13 @@ export class ChatHub {
       agent.emergencyStop(from, kind === 'whisper' ? from : null);
       return;
     }
+    // 3. 问最近的结构、生物群系在哪，或者史莱姆区块：不用大脑，直接查了回答（哪种大脑模式都一样）
+    const q = agent.online ? builtinQuery(text) : null;
+    if (q) {
+      agent.events.push('bot', { what: 'builtin_answer', by: from, detail: text });
+      answerBuiltin(agent, from, q).catch((err) => log.warn('内置查询出错：', err.message));
+      return;
+    }
     agent.emit('addressed', msg);
   }
 
@@ -167,15 +175,22 @@ export class ChatHub {
     return this.lines.slice(-n);
   }
 
-  // 在 fn 执行后的 ms 毫秒内收集系统消息（用于拿到命令的回显）。
-  async capture(fn, ms = 1500) {
+  // 在 fn 执行后的 ms 毫秒内收集系统消息（用于拿到命令的回显）；给了 until，收到它认可的消息就提前结束。
+  async capture(fn, ms = 1500, until = null) {
     const got = [];
-    const tap = (text) => got.push(text);
+    let finish;
+    const finished = new Promise((resolve) => { finish = resolve; });
+    const tap = (text) => {
+      got.push(text);
+      if (until?.(text)) finish();
+    };
     this.taps.add(tap);
+    let timer;
     try {
       await fn();
-      await new Promise((resolve) => setTimeout(resolve, ms));
+      await Promise.race([finished, new Promise((resolve) => { timer = setTimeout(resolve, ms); })]);
     } finally {
+      clearTimeout(timer);
       this.taps.delete(tap);
     }
     return got;

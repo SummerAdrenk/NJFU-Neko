@@ -2,7 +2,9 @@
 // 自测：不连服务器，检查各模块能加载、关键的纯逻辑算得对。改完代码、重启猫娘之前先跑：npm test
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import os from 'node:os';
+import http from 'node:http';
+import { execFileSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import mcDataLoader from 'minecraft-data';
 import vec3 from 'vec3';
@@ -481,6 +483,152 @@ try {
 const secretsMod = await import('../src/secrets.js');
 check('打码 OpenAI / DeepSeek 的 Key', !secretsMod.redact('用 sk-proj-AbCdEfGhIjKlMnOpQrStUv123456 调用').includes('AbCdEfGhIjKlMnOpQrStUv')
   && !secretsMod.redact('sk-0123456789abcdef0123456789abcdef').includes('0123456789abcdef0123'));
+
+// 找地方（不用大脑）：史莱姆区块和 Java 版算法逐个对过（种子 -4702643062983347072，Java 的 new Random(...).nextInt(10)）
+const finder = await import('../src/bot/finder.js');
+const SEED = '-4702643062983347072';
+check('史莱姆区块 和 Java 版算法一致', finder.isSlimeChunk(SEED, 94, -2) && !finder.isSlimeChunk(SEED, 95, -2) && finder.isSlimeChunk(SEED, -3000, 5000)
+  && !finder.isSlimeChunk(SEED, 123456, -654321) && finder.isSlimeChunk(SEED, -40, -36) && !finder.isSlimeChunk(SEED, -40, -35) && finder.isSlimeChunk(SEED, 40, 33));
+let slimeCount = 0;
+for (let x = -50; x < 50; x++) for (let z = -50; z < 50; z++) slimeCount += finder.isSlimeChunk(SEED, x, z) ? 1 : 0;
+check('史莱姆区块 大约十分之一', slimeCount > 850 && slimeCount < 1150, `${slimeCount}/10000`);
+const ask = (t) => finder.builtinQuery(t);
+check('找地方 听懂问句', ask('猫娘最近的村庄在哪')?.place.id === '#village' && ask('猫娘附近哪有樱花林')?.place.id === 'cherry_grove' && ask('远古城市多远')?.place.id === 'ancient_city');
+check('找地方 叫法长的优先', ask('下界要塞在哪')?.place.id === 'fortress' && ask('竹林在哪')?.place.id === 'bamboo_jungle' && ask('沼泽小屋坐标')?.place.id === 'swamp_hut'
+  && ask('海底遗迹神殿在哪')?.place.id === 'monument');
+check('找地方 史莱姆区块', ask('这里是史莱姆区块吗')?.type === 'slime' && ask('猫娘哪里刷史莱姆')?.type === 'slime' && ask('猫娘去打史莱姆') === null);
+check('找地方 要她做事的交给大脑', ask('带我去最近的村庄') === null && ask('猫娘去砍 20 个木头') === null && ask('猫娘你是我的宝藏，你在哪') === null);
+check('找地方 英文 ID', finder.matchPlace('minecraft:cherry_grove')?.kind === 'biome' && finder.matchPlace('#village')?.id === '#village');
+check('找地方 方向', finder.direction(0, 0, 100, 0) === '东' && finder.direction(0, 0, 0, 100) === '南' && finder.direction(0, 0, -100, -100) === '西北' && finder.direction(0, 0, 70, -70) === '东北');
+const findCmds = [];
+const findAgent = {
+  identity: { opLevel: 4 }, online: true, worldSeed: SEED, target: { serverVersion: '26.2' }, cfg: { mods: { chunkbase_platform: '' } },
+  bot: { game: { dimension: 'minecraft:overworld' }, players: { Steve: { entity: { position: new Vec3(0, 64, 0) } } }, chat: (t) => findCmds.push(t) },
+  chat: { capture: async (fn) => { await fn(); return ['The nearest #minecraft:village (minecraft:village_plains) is at [320, ~, -480] (576 blocks away)']; } },
+};
+const found = JSON.stringify(await finder.locateFor(findAgent, 'Steve', finder.matchPlace('村庄')));
+check('找地方 以玩家为中心 /locate', findCmds[0] === '/execute as Steve at Steve run locate structure #minecraft:village');
+check('找地方 回答坐标、方向、距离和地图', ['平原村庄', 'X=320', 'Z=-480', '东北', '576', `seed=${SEED}`, 'platform=java_26_2', 'dimension=overworld'].every((s) => found.includes(s)), found.slice(0, 300));
+findAgent.bot.players.Steve.entity.position = new Vec3(94 * 16 + 3, 20, -2 * 16 + 5);
+const slimeText = JSON.stringify(await finder.slimeFor(findAgent, 'Steve'));
+check('找地方 脚下的史莱姆区块', slimeText.includes('是史莱姆区块！') && slimeText.includes('slime-finder#seed=') && slimeText.includes('附近的'));
+const nlSaid = [];
+const nlEmitted = [];
+const nlAgent = {
+  cfg: { chat: { command_prefix: '#', triggers: ['猫娘'], owners: [], respond_to_all: false, respond_when_alone: false, follow_up_seconds: 0 }, identity: { display_name: '猫娘' } },
+  online: true, events: { push() {} }, identity: { opLevel: 0, canTellraw: () => false }, affection: { onChat() {} },
+  say: (t) => nlSaid.push(t), emit: (name) => nlEmitted.push(name), emergencyStop() {},
+};
+const nlHub = new chatMod.ChatHub(nlAgent);
+nlHub.onPlayerMessage({ username: 'NJFU_Neko', players: {} }, { from: 'Steve', text: '猫娘最近的村庄在哪', kind: 'public' });
+nlHub.onPlayerMessage({ username: 'NJFU_Neko', players: {} }, { from: 'Steve', text: '猫娘去砍 20 个木头', kind: 'public' });
+await new Promise((r) => setTimeout(r, 50));
+check('找地方 直接回答，不叫醒大脑', nlEmitted.filter((e) => e === 'addressed').length === 1 && nlSaid.some((t) => t.includes('管理员权限')));
+const capHub = new chatMod.ChatHub({ cfg: { chat: {} } });
+const capStart = Date.now();
+const capGot = await capHub.capture(async () => {
+  setTimeout(() => { for (const tap of capHub.taps) tap('Seed: [123]'); }, 30);
+}, 3000, (t) => /\[\d+\]/.test(t));
+check('命令回显 收到想要的就提前结束', capGot[0] === 'Seed: [123]' && Date.now() - capStart < 1500 && capHub.taps.size === 0);
+
+// Claude Code 模式没开会话时自己回话：命令行 claude 只拿到猫娘的工具，替谁做事按谁的权限
+const cc = await import('../src/brain/claudeCodeBrain.js');
+const hargs = cc.headlessArgs({ model: 'sonnet', effort: 'low', max_turns: 12 }, { mcp: 'm.json', system: 's.md' });
+const argOf = (flag) => hargs[hargs.indexOf(flag) + 1];
+check('自己回话 只给猫娘的工具', argOf('--tools') === '' && argOf('--allowedTools') === 'mcp__neko' && hargs.includes('--strict-mcp-config')
+  && argOf('--permission-mode') === 'dontAsk' && !hargs.join(' ').includes('Bash'));
+check('自己回话 参数', hargs[0] === '-p' && argOf('--output-format') === 'json' && argOf('--model') === 'sonnet' && argOf('--system-prompt-file') === 's.md'
+  && argOf('--mcp-config') === 'm.json' && hargs.includes('--no-session-persistence'));
+check('自己回话 出错的提示', cc.explainFailure('Not logged in · Please run /login', 'claude').kind === 'login' && cc.explainFailure('Claude AI usage limit reached', 'claude').kind === 'limit'
+  && cc.explainFailure('奇怪的错误', 'claude').kind === 'error');
+check('自己回话 会话在监听时让给会话', !cc.watcherAttached({}) && cc.watcherAttached({ watching: { count: 1, last: 0 } })
+  && cc.watcherAttached({ watching: { count: 0, last: Date.now() - 2000 } }) && !cc.watcherAttached({ watching: { count: 0, last: Date.now() - 60_000 } }));
+const testDir = path.join(os.tmpdir(), 'njfu-neko-selftest');
+fs.mkdirSync(path.join(testDir, 'bin'), { recursive: true });
+const fakeCli = path.join(testDir, 'bin', process.platform === 'win32' ? 'claude.exe' : 'claude');
+fs.writeFileSync(fakeCli, '');
+check('自己回话 找命令行 claude', cc.findClaudeCli('', { PATH: path.join(testDir, 'bin'), APPDATA: testDir }) === fakeCli && cc.findClaudeCli(process.execPath, { PATH: '' }) === process.execPath);
+if (process.platform === 'win32') {
+  for (const v of ['2.1.9', '2.1.10']) {
+    fs.mkdirSync(path.join(testDir, 'Claude', 'claude-code', v), { recursive: true });
+    fs.writeFileSync(path.join(testDir, 'Claude', 'claude-code', v, 'claude.exe'), '');
+  }
+  check('自己回话 桌面版自带的取最新版本', cc.findClaudeCli('', { PATH: '', APPDATA: testDir }).includes(`${path.sep}2.1.10${path.sep}`));
+}
+const ctl = await import('../src/control/server.js');
+const runAgent = { brainRuns: new Map([['r1', { source: 'brain', name: 'Alex', owner: false }]]) };
+check('控制接口 自己回话按玩家的权限', ctl.requestBy(runAgent, { 'x-neko-run': 'r1' }, {}).owner === false && ctl.requestBy(runAgent, { 'x-neko-run': 'zz' }, {}) === null
+  && ctl.requestBy(runAgent, {}, {}).source === 'control');
+const actsMod = await import('../src/bot/actions.js');
+check('控制接口 非主人只能用查询类命令', Boolean(actsMod.commandPermission({ cfg }, 'give Alex diamond 64', { by: { source: 'brain', owner: false } }))
+  && !actsMod.commandPermission({ cfg }, 'locate structure #minecraft:village', { by: { source: 'brain', owner: false } }));
+const mcpMod = await import('../src/brain/mcpServer.js');
+const mcpCalls = [];
+const mcpH = mcpMod.createHandlers(async (method, route, body) => {
+  mcpCalls.push({ method, route, body });
+  return route === '/tools' ? [{ name: 'say', description: '说话', input_schema: { type: 'object', properties: { text: { type: 'string' } } } }] : { ok: false, text: '这个命令我只替主人执行' };
+});
+const mcpInit = mcpH.initialize({ protocolVersion: '2025-06-18' });
+const mcpList = await mcpH['tools/list']();
+const mcpCall = await mcpH['tools/call']({ name: 'run_command', arguments: { command: 'op Steve' } });
+check('MCP 工具列表', Boolean(mcpInit.capabilities.tools) && mcpList.tools[0].name === 'say' && mcpList.tools[0].inputSchema.type === 'object');
+check('MCP 调用转给控制接口', mcpCalls[1].route === '/act' && mcpCalls[1].body.action === 'run_command' && mcpCalls[1].body.wait === 25 && mcpCall.isError === true);
+const seen = [];
+const fakeControl = http.createServer((req, res) => {
+  seen.push({ url: req.url, run: req.headers['x-neko-run'], token: req.headers['x-neko-token'] });
+  res.end(JSON.stringify(req.url === '/tools' ? [{ name: 'say', description: '说话', input_schema: { type: 'object', properties: {} } }] : { ok: true, text: '已说出' }));
+});
+await new Promise((r) => fakeControl.listen(0, '127.0.0.1', r));
+const controlFile = path.join(testDir, 'control.json');
+fs.writeFileSync(controlFile, JSON.stringify({ url: `http://127.0.0.1:${fakeControl.address().port}`, token: 't0k' }));
+const mcpChild = spawn(process.execPath, [path.join(ROOT, 'src', 'brain', 'mcpServer.js')], { env: { ...process.env, NEKO_CONTROL_FILE: controlFile, NEKO_RUN: 'run1' } });
+let mcpOut = '';
+mcpChild.stdout.setEncoding('utf8').on('data', (d) => { mcpOut += d; });
+const rpc = (msg) => mcpChild.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', ...msg })}\n`);
+rpc({ id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18' } });
+rpc({ method: 'notifications/initialized' });
+rpc({ id: 2, method: 'tools/list' });
+rpc({ id: 3, method: 'tools/call', params: { name: 'say', arguments: { text: '喵' } } });
+const mcpLines = () => mcpOut.split('\n').filter((l) => l.trim());
+for (let i = 0; i < 100 && mcpLines().length < 3; i++) await new Promise((r) => setTimeout(r, 50));
+mcpChild.kill();
+fakeControl.close();
+const mcpReplies = mcpLines().map((l) => JSON.parse(l)).sort((a, b) => a.id - b.id);
+check('MCP 服务器 走 stdio', mcpReplies.length === 3 && mcpReplies[0].result?.serverInfo?.name === 'neko' && mcpReplies[1].result?.tools?.[0]?.name === 'say'
+  && mcpReplies[2].result?.content?.[0]?.text === '已说出', mcpOut.slice(0, 300));
+check('MCP 服务器 带上令牌和这一轮的编号', seen.length === 2 && seen.every((s) => s.run === 'run1' && s.token === 't0k'));
+// 假的命令行 claude（npm 装法：claude.cmd 旁边的 node_modules/@anthropic-ai/claude-code/cli.js）：看参数、提示词、工作目录，按 JSON 结果回
+const npmDir = path.join(testDir, 'npm');
+const fakeJs = path.join(npmDir, 'node_modules', '@anthropic-ai', 'claude-code', 'cli.js');
+fs.mkdirSync(path.dirname(fakeJs), { recursive: true });
+fs.writeFileSync(path.join(npmDir, 'claude.cmd'), '');
+fs.writeFileSync(fakeJs, `(async () => {
+  const fs = await import('node:fs');
+  let input = '';
+  process.stdin.setEncoding('utf8');
+  for await (const chunk of process.stdin) input += chunk;
+  fs.writeFileSync(process.env.NEKO_FAKE_LOG, JSON.stringify({ args: process.argv.slice(2), input, cwd: process.cwd() }));
+  const out = input.includes('LOGGED_OUT')
+    ? { type: 'result', subtype: 'success', is_error: true, result: 'Not logged in · Please run /login', num_turns: 1, usage: {} }
+    : { type: 'result', subtype: 'success', is_error: false, result: '回了 Steve 一句', num_turns: 2, usage: { input_tokens: 100, output_tokens: 20 } };
+  process.stdout.write('some banner\\n' + JSON.stringify(out) + '\\n');
+})();
+`);
+const fakeCmd = path.join(npmDir, 'claude.cmd');
+check('自己回话 npm 装的用 node 跑 cli.js', cc.cliCommand(fakeCmd).cmd === process.execPath && cc.cliCommand(fakeCmd).pre[0] === fakeJs && !cc.cliCommand(fakeCmd).shell);
+process.env.NEKO_FAKE_LOG = path.join(testDir, 'fake-claude.json');
+const ccBrain = new cc.ClaudeCodeBrain({ cfg: { brain: { claude_code: { cli: fakeCmd, model: 'sonnet' } }, commands: cfg.commands }, on() {}, events: { push() {} } });
+const ccFiles = ccBrain.writeFiles('run-abc');
+const ccOut = await ccBrain.runCli(fakeCmd, cc.headlessArgs(ccBrain.cfg, ccFiles), '【这次叫醒你的】Steve 说：你好');
+const ccLog = JSON.parse(fs.readFileSync(process.env.NEKO_FAKE_LOG, 'utf8'));
+const ccMcp = JSON.parse(fs.readFileSync(ccFiles.mcp, 'utf8')).mcpServers.neko;
+check('自己回话 提示词从标准输入给、结果按 JSON 读', ccOut.result === '回了 Steve 一句' && ccOut.num_turns === 2 && ccLog.input.includes('Steve 说：你好') && ccLog.args.includes('--mcp-config'));
+check('自己回话 在空目录里跑（不读项目的 CLAUDE.md）', path.resolve(ccLog.cwd) === path.resolve(ccBrain.cwd) && !path.resolve(ccLog.cwd).startsWith(ROOT));
+check('自己回话 MCP 配置：本机 node 跑 mcpServer.js，带这一轮的编号', ccMcp.command === process.execPath && ccMcp.args[0].endsWith(path.join('src', 'brain', 'mcpServer.js')) && ccMcp.env.NEKO_RUN === 'run-abc');
+check('自己回话 系统提示：人设 + 规则 + 这一轮只有猫娘的工具', fs.readFileSync(ccFiles.system, 'utf8').includes('NJFU智慧猫娘') && fs.readFileSync(ccFiles.system, 'utf8').includes('mcp__neko__'));
+const ccBad = await ccBrain.runCli(fakeCmd, cc.headlessArgs(ccBrain.cfg, ccFiles), 'LOGGED_OUT');
+check('自己回话 没登录能认出来', ccBad.is_error && cc.explainFailure(ccBad.result, fakeCmd).kind === 'login');
+delete process.env.NEKO_FAKE_LOG;
 
 console.log(`${failed ? '✗' : '✓'} 自测：通过 ${passed} 项${failed ? `，失败 ${failed} 项` : ''}`);
 process.exit(failed ? 1 : 0);

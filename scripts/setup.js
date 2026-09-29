@@ -297,7 +297,7 @@ async function wizard() {
   console.log('4. 选她的大脑（能听懂闲聊、接临时的活；不接大脑也能用快捷命令和自动行为）：');
   console.log('   1) Claude API        她自己思考，需要 Anthropic 的 API Key，按用量付费');
   console.log('   2) GPT / DeepSeek 等  她自己思考，需要对应服务商的 API Key，按用量付费');
-  console.log('   3) Claude Code       由你开着的 Claude Code 会话当大脑，不要密钥（用 Claude 订阅）');
+  console.log('   3) Claude Code       用你的 Claude 订阅，不要 API Key（第一次要登录一下命令行版 Claude Code）');
   console.log('   4) 先不接大脑');
   const choice = await prompt(rl, '   选哪个', '4');
   a.mode = { 1: 'api', 2: 'openai', 3: 'claude-code' }[choice] ?? 'none';
@@ -317,7 +317,7 @@ async function wizard() {
   }
   fs.writeFileSync(configPath, applyAnswers(fs.readFileSync(templatePath, 'utf8'), a));
   ok('已生成 config.toml（更多设置用记事本打开它，每一项都有中文注释）');
-  if (a.mode === 'claude-code') console.log('  Claude Code 模式：在这个文件夹里打开 Claude Code，对它说“按 CLAUDE.md 启动猫娘并接管”（见 README）');
+  if (a.mode === 'claude-code') console.log('  Claude Code 模式：启动后控制台会检查命令行版 Claude Code 登录了没有，没登录就照提示运行一次 auth login（见 README）');
 }
 
 async function ensureConfig() {

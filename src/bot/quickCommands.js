@@ -10,12 +10,21 @@ import { loadConfig } from '../config.js';
 import { combatFlags, giveCheatKit, MODE_DESC, MODE_NAMES, normalizeMode, removeCheatKit } from './combatModes.js';
 import { DUEL_LEVELS, duelLevel, parseDuelLevel } from './duelKits.js';
 import { ARENA_OPTIONS, arenaMode } from './duelArena.js';
+import { PLACES, locateFor, matchPlace, slimeFor } from './finder.js';
 
 // 决斗难度的按钮：点一下填进聊天框；悬停看这一档的全部装备
 const duelPick = (l, text = l.name) => ({ text: `[${text}]`, color: 'aqua', suggest: `#决斗 ${l.name}`, hover: `${l.name}：${l.summary}\n（点击填入聊天框，再按回车）` });
 const duelRow = (group) => DUEL_LEVELS.filter((l) => l.group === group).flatMap((l) => [duelPick(l, l.roman), { text: ' ' }]);
 
 const ask = (text) => ({ text, color: 'white', suggest: text, hover: '点击填入聊天框，改一改再发送' });
+
+// #找 不带参数：列出认得的结构和生物群系（点一下填进聊天框）
+const placeRows = (kind) => {
+  const btns = PLACES.filter((p) => p.kind === kind).map((p) => ({ text: `[${p.name}]`, color: 'aqua', suggest: `#找 ${p.name}`, hover: `找离你最近的${p.name}\n（点击填入聊天框，再按回车）` }));
+  const rows = [];
+  for (let i = 0; i < btns.length; i += 7) rows.push(btns.slice(i, i + 7).flatMap((b) => [b, { text: ' ' }]));
+  return rows;
+};
 const topic = (name) => ({ text: `[${name}]`, color: 'gold', suggest: name === '决斗' ? '#帮助 决斗' : `#${name}`, hover: `查看「${name}」的说明` });
 
 // #帮助 [主题]：每一页是若干行，每行由若干段组成（见 ui.js）。
@@ -92,7 +101,7 @@ const HELP = {
   ],
   其他: [
     title('其他'),
-    [label('找结构：'), ask('猫娘最近的远古城市在哪'), label('（会附 Chunkbase 地图）')],
+    [label('找结构：'), cmd('#找 村庄', '最近的结构、生物群系在哪（附 Chunkbase 地图）'), gap, cmd('#史莱姆', '你脚下是不是史莱姆区块，附近哪里有'), label('；直接问也行：'), ask('猫娘最近的远古城市在哪')],
     [label('记事：'), ask('猫娘记住我家在 100,64,200'), gap, cmd('#记忆', '看我记住的事（主人）')],
     [label('睡觉：天黑有人躺床时我会问要不要一起睡，回「好」就去')],
     [label('许愿：'), cmd('#需求 学会钓鱼', '想让我学会的新本事、想改的地方（主人）'), gap, cmd('#需求', '看看需求处理得怎么样了')],
@@ -380,6 +389,18 @@ export function createQuickCommands(agent) {
     { names: ['观战', '看决斗', 'spectate'], run: async (player) => [await agent.duels.spectate(player.name)].filter(Boolean) },
     { names: ['不看了', '退出观战', '结束观战'], run: (player) => [agent.duels.unspectate(player.name) ?? '好，送你回去啦～'] },
     { names: ['战绩'], run: (player) => [agent.duels.statsText(player.name)] },
+    // 找结构、生物群系、史莱姆区块：游戏自带的 /locate 和本地计算，不经过大脑
+    {
+      names: ['找', '最近', '定位', 'locate', 'find'],
+      run: async (player, args) => {
+        const what = args.join('');
+        if (!what) return { panel: [title('找结构和生物群系'), [label('结构：')], ...placeRows('structure'), [label('生物群系：')], ...placeRows('biome'), [label('史莱姆区块：'), cmd('#史莱姆')]] };
+        const target = matchPlace(what);
+        if (!target) return [`我不认识「${what}」喵，发 #找 看看我认得哪些`];
+        return { panel: await locateFor(agent, player.name, target) };
+      },
+    },
+    { names: ['史莱姆', '史莱姆区块', 'slime'], run: async (player) => ({ panel: await slimeFor(agent, player.name) }) },
   ];
 
   // 返回 true 表示这句话是快捷命令并且已经处理。

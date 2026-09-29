@@ -292,6 +292,8 @@ export class Agent extends EventEmitter {
       this.scheduleReconnect(false);
       return;
     }
+    // 换了存档（局域网端口变了）就重新查种子
+    if (this.target && this.target.label !== target.label) this.worldSeed = null;
     this.target = target;
     log.info(`正在以 ${this.cfg.account.username} 的身份连接 ${target.label}（服务器 ${target.serverVersion}，客户端协议 ${target.version}）…`);
 

@@ -801,18 +801,27 @@ async function schematicAction(agent, { action, name, x, y, z, mode }, ctx) {
 
 // ── 查找结构 / 群系（/locate + Chunkbase 链接）──────────
 
-async function chunkbaseLink(agent, x, z) {
-  const bot = agent.bot;
-  if (!agent.worldSeed && agent.identity.opLevel >= 2) {
-    const replies = await agent.chat.capture(async () => bot.chat('/seed'), 1200);
+// 世界种子：有管理员权限时用 /seed 查一次记住（换了存档会重新查）
+export async function worldSeed(agent) {
+  if (!agent.worldSeed && agent.online && agent.identity.opLevel >= 2) {
+    const replies = await agent.chat.capture(async () => agent.bot.chat('/seed'), 1500, (t) => /\[-?\d+\]/.test(t));
     const m = replies.join(' ').match(/\[(-?\d+)\]/);
     if (m) agent.worldSeed = m[1];
   }
-  if (!agent.worldSeed) return null;
+  return agent.worldSeed ?? null;
+}
+
+export function chunkbasePlatform(agent) {
   const ver = String(agent.target?.serverVersion ?? '').match(/(\d+)\.(\d+)/);
-  const platform = agent.cfg.mods.chunkbase_platform || (ver ? `java_${ver[1]}_${ver[2]}` : 'java_1_21_5');
-  const dim = { overworld: 'overworld', the_nether: 'nether', the_end: 'end' }[String(bot.game?.dimension ?? '').replace(/^minecraft:/, '')] ?? 'overworld';
-  return `https://www.chunkbase.com/apps/seed-map#seed=${agent.worldSeed}&platform=${platform}&dimension=${dim}&x=${Math.round(x)}&z=${Math.round(z)}&zoom=0.5`;
+  return agent.cfg.mods.chunkbase_platform || (ver ? `java_${ver[1]}_${ver[2]}` : 'java_1_21_5');
+}
+
+// Chunkbase 种子地图链接（dimension 不填就是她自己所在的维度）
+export async function chunkbaseLink(agent, x, z, dimension) {
+  const seed = await worldSeed(agent);
+  if (!seed) return null;
+  const dim = { overworld: 'overworld', the_nether: 'nether', the_end: 'end' }[String(dimension ?? agent.bot?.game?.dimension ?? '').replace(/^minecraft:/, '')] ?? 'overworld';
+  return `https://www.chunkbase.com/apps/seed-map#seed=${seed}&platform=${chunkbasePlatform(agent)}&dimension=${dim}&x=${Math.round(x)}&z=${Math.round(z)}&zoom=0.5`;
 }
 
 async function locateAction(agent, { kind, target }, ctx) {

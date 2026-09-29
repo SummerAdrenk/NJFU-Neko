@@ -7,7 +7,7 @@ import { createRequire } from 'node:module';
 import { CONTROL_FILE } from '../paths.js';
 import { getLog } from '../log.js';
 import { addSecret, redact } from '../secrets.js';
-import { listActions, runAction } from '../bot/actions.js';
+import { listActions, runAction, toolDefinitions } from '../bot/actions.js';
 import { describeStatus, snapshot } from '../bot/status.js';
 import { goals } from '../bot/createBot.js';
 import { Vec3 } from '../bot/helpers.js';
@@ -76,11 +76,21 @@ function listen(server, port, host) {
   });
 }
 
+// 谁在操作：带 x-neko-run 的是“自己回话”那一轮（claude -p 经 MCP 发来的），按那一轮替谁做事来算权限（那一轮结束了就不认）；
+// 不带的是本机的命令行 / Claude Code 会话（主人自己）。
+export function requestBy(agent, headers, body) {
+  const run = String(headers['x-neko-run'] ?? '');
+  if (!run) return { source: 'control', name: body.by ?? 'control' };
+  return agent.brainRuns?.get(run) ?? null;
+}
+
 export async function startControlServer(agent, { brain, brainMode }) {
   const cfg = agent.cfg.control;
   const token = crypto.randomBytes(24).toString('hex');
   addSecret(token);
   let port = Number(cfg.port);
+  // 有没有 Claude Code 会话在监听（watch 一直挂着 /events 长轮询）：Claude Code 模式据此决定要不要自己调用命令行回话
+  agent.watching = { count: 0, last: 0 };
 
   const routes = {
     'GET /health': () => ({ ok: true, boot: agent.events.boot, online: agent.online, username: agent.cfg.account.username, brain: brainMode }),
@@ -88,22 +98,35 @@ export async function startControlServer(agent, { brain, brainMode }) {
     'GET /status': () => describeStatus(agent),
     'GET /context': () => buildContext(agent),
     'GET /actions': () => listActions(),
+    'GET /tools': () => toolDefinitions(false),
     'GET /events': async (url) => {
       const since = Number(url.searchParams.get('since') ?? 0);
       const wait = Math.min(Number(url.searchParams.get('wait') ?? 0), 60_000);
       const types = url.searchParams.get('types')?.split(',').filter(Boolean);
-      const events = await agent.events.wait(since, wait, types);
-      return { boot: agent.events.boot, seq: agent.events.seq, events };
+      if (wait > 0) agent.watching.count += 1;
+      try {
+        const events = await agent.events.wait(since, wait, types);
+        return { boot: agent.events.boot, seq: agent.events.seq, events };
+      } finally {
+        if (wait > 0) {
+          agent.watching.count -= 1;
+          agent.watching.last = Date.now();
+        }
+      }
     },
     'POST /say': async (url, body) => {
       if (!agent.online) return { ok: false, text: '现在没有连上服务器' };
       const n = agent.say(String(body.text ?? ''), { to: body.to || undefined });
       return { ok: n > 0, text: n ? `已说出（${n} 行）` : '没有可说的内容' };
     },
-    'POST /act': async (url, body) => runAction(agent, String(body.action ?? ''), body.args ?? {}, {
-      waitMs: Math.min(Number(body.wait ?? 60), 600) * 1000,
-      by: { source: 'control', name: body.by ?? 'control' },
-    }),
+    'POST /act': async (url, body, req) => {
+      const by = requestBy(agent, req.headers, body);
+      if (!by) return { ok: false, text: '这一轮已经结束了' };
+      return runAction(agent, String(body.action ?? ''), body.args ?? {}, {
+        waitMs: Math.min(Number(body.wait ?? 60), 600) * 1000,
+        by,
+      });
+    },
     'POST /cancel': async () => {
       const task = await agent.tasks.cancel('被控制台取消');
       return { ok: true, text: task ? `已停止：${task.desc}` : '没有进行中的任务' };
@@ -152,7 +175,7 @@ export async function startControlServer(agent, { brain, brainMode }) {
       if (url.pathname !== '/events' && url.pathname !== '/health') {
         log.fileOnly('debug', `${req.method} ${url.pathname}${req.method === 'POST' ? ` ${JSON.stringify(body).slice(0, 300)}` : ''}`);
       }
-      send(res, 200, await handler(url, body));
+      send(res, 200, await handler(url, body, req));
     } catch (err) {
       log.warn(`处理 ${req.method} ${req.url} 出错：`, err);
       send(res, 500, { ok: false, text: err?.message ?? String(err) });
