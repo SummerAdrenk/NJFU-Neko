@@ -19,7 +19,7 @@ export const SETTINGS = [
   { key: '垫方块', path: 'behavior.scaffold', type: 'bool', desc: '走路时搭桥、垫高' },
   { key: '防摔', path: 'behavior.fall_safety', type: 'bool', desc: '落地水、鞘翅、落地船' },
   { key: '传送距离', path: 'behavior.teleport_distance', type: 'int', min: 0, max: 256, desc: '离主人多远就传送过去（0 关闭）' },
-  { key: '撤退血量', path: 'behavior.retreat_health', type: 'int', min: 0, max: 19, desc: '血量到这个值就撤退（默认 2 = 1 颗心；普通模式多 2，极限少 1）' },
+  { key: '撤退血量', path: 'behavior.retreat_health', type: 'int', min: 0, max: 19, desc: '血量到这个值就撤退（默认 1 滴血，0 = 不撤；普通模式多 2）' },
   { key: '索敌范围', path: 'combat.engage_radius', type: 'int', min: 4, max: 96, desc: '多远的怪会主动去打（默认 32 格；末影龙、凋灵、恶魂不受限）' },
   { key: '跳劈', path: 'combat.crits', type: 'bool', desc: '跳起来下落时出手打暴击' },
   { key: '盾牌', path: 'combat.shield', type: 'bool', desc: '用盾牌格挡' },

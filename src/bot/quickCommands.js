@@ -26,7 +26,7 @@ const HELP = {
   互动: [
     title('互动'),
     [cmd('#摸头'), gap, cmd('#抱抱'), gap, cmd('#挥手'), gap, cmd('#跳舞'), gap, cmd('#转圈'), gap, cmd('#喵')],
-    [cmd('#坐下'), gap, cmd('#起来')],
+    [cmd('#坐下'), gap, cmd('#起来'), gap, cmd('#睡觉', '天黑了一起去睡（床边有怪会先打掉）')],
     [label('蹲在我旁边看着我 = '), value('摸头', 'yellow')],
     [label('右键我 = '), value('打开我的背包面板', 'yellow'), label('　Shift+右键 = '), value('功能菜单', 'yellow'), label('（要装面板模组）')],
     [label('扔木棍或骨头给我 = '), value('我会叼回来还给你', 'yellow')],
@@ -39,7 +39,7 @@ const HELP = {
   ],
   决斗: [
     title('PVP 决斗'),
-    [cmd('#决斗', '先选难度'), gap, cmd('#决斗 简单'), gap, cmd('#决斗 普通'), gap, cmd('#决斗 困难', '我会走位、跳劈、用盾')],
+    [cmd('#决斗', '先选难度'), gap, cmd('#决斗 简单'), gap, cmd('#决斗 普通'), gap, cmd('#决斗 困难', '我会走位、跳劈、用盾'), gap, cmd('#决斗 作弊', '我临时换上顶级附魔装备')],
     [label('倒计时后开打，默认'), value('切磋', 'yellow'), label('：打到只剩几颗心就停')],
     [cmd('#认输'), gap, cmd('#战绩', '你对我的胜负记录')],
   ],
@@ -51,7 +51,7 @@ const HELP = {
     [label('困怪：'), value('打不过的近战怪（卫道士、凋灵骷髅、末影人…）放船困住再打，不打船，打完收船', 'white')],
     [label('专门打法：'), value('苦力怕打了就跑或用弓，恶魂反弹火球，烈焰人用雪球，幻翼等俯冲', 'white')],
     [label('骑乘怪：'), value('蜘蛛骑士、鸡骑士等先打骑手；船和矿车里的怪不打（多半是机器）', 'white')],
-    [label('保命：'), value('半血喝药水、吃金苹果，图腾换到副手，打斗间隙吃东西，着火倒水；只剩 1 颗心才撤（#设置 撤退血量）', 'white')],
+    [label('保命：'), value('半血喝药水、吃金苹果，图腾换到副手，打斗间隙吃东西，着火倒水；只剩 1 滴血才撤（#设置 撤退血量）', 'white')],
     [label('药水：'), value('给自己喝，给你扔治疗/再生（你血少时），往怪堆砸伤害药水（亡灵用治疗药水）', 'white')],
     [label('模式：'), cmd('#战斗模式', '普通 / 困难 / 极限 / 作弊（临时顶级装备）'), label('（点一下查看现在的模式和说明）')],
     [label('Boss：'), ask('猫娘去打末影龙'), dot, ask('猫娘打凋灵'), label('（要主人同意）')],
@@ -227,6 +227,13 @@ export function createQuickCommands(agent) {
     { names: ['转圈', 'spin'], run: emote('spin') },
     { names: ['喵', 'meow', '喵喵'], run: async (player) => [...await emote('meow')(player), '喵～'] },
     { names: ['坐下', 'sit'], run: async (player) => [...await emote('sit')(player), '好，坐下了～'] },
+    {
+      names: ['睡觉', '睡', 'sleep'],
+      run: async (player) => {
+        await agent.social.goSleep(player.name);
+        return [];
+      },
+    },
     { names: ['起来', '站起来', 'stand'], run: emote('stand') },
     // 功能需求：主人许愿，后台的 Claude Code 按 CLAUDE.md 的约束来做
     {
@@ -342,13 +349,14 @@ export function createQuickCommands(agent) {
           return {
             panel: [
               title('PVP 决斗：选个难度（点一下，再按回车）'),
-              [cmd('#决斗 简单', '不走位、不跳劈、不举盾，出手慢'), gap, cmd('#决斗 普通', '左右走位、举盾，会用斧子破你的盾'), gap, cmd('#决斗 困难', '走位、跳劈暴击、举盾、斧子破盾')],
+              [cmd('#决斗 简单', '不走位、不跳劈、不举盾，出手慢'), gap, cmd('#决斗 普通', '左右走位、举盾，会用斧子破你的盾'), gap,
+                cmd('#决斗 困难', '走位、跳劈暴击、举盾、斧子破盾'), gap, cmd('#决斗 作弊', '困难的打法，再临时换上一套顶级附魔装备（打完收回）')],
               [label(agent.cfg.duel?.lethal ? '现在是真打：打到有一方倒下。' : '切磋：打到只剩几颗心就停。'), cmd('#认输'), label(' 随时认输，'), cmd('#战绩'), label(' 看胜负')],
             ],
           };
         }
-        const level = { 简单: 'easy', 普通: 'normal', 困难: 'hard', easy: 'easy', normal: 'normal', hard: 'hard' }[args[0]];
-        if (!level) return ['难度只有：简单、普通、困难（比如 #决斗 困难）'];
+        const level = { 简单: 'easy', 普通: 'normal', 困难: 'hard', 作弊: 'cheat', easy: 'easy', normal: 'normal', hard: 'hard', cheat: 'cheat' }[args[0]];
+        if (!level) return ['难度只有：简单、普通、困难、作弊（比如 #决斗 困难）'];
         const r = await act('duel', { action: 'start', player: player.name, difficulty: level }, player, 500);
         return r.ok ? [] : [r.text];
       },

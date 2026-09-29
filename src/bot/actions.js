@@ -456,14 +456,18 @@ function attackTarget(agent, { target, count }, ctx) {
   }, taskOpts(ctx));
 }
 
-function guard(agent, { player }, ctx) {
+function guard(agent, { player, x, y, z, minutes, until_player: back }, ctx) {
   const bot = agent.bot;
   const username = player ? requirePlayerEntity(bot, player).username : null;
-  const home = bot.entity.position.clone();
+  const home = x != null && z != null ? new Vec3(num(x, 'x'), y != null ? num(y, 'y') : bot.entity.position.y, num(z, 'z')) : bot.entity.position.clone();
+  const until = Number(minutes) > 0 ? Date.now() + Number(minutes) * 60_000 : Infinity;
   return agent.tasks.run('guard', username ? `保护 ${username}` : `守卫 ${fmtPos(home)}`, async (task) => {
     let following = null;
     for (;;) {
       if (task.signal.aborted) throw abortError(task.signal);
+      if (Date.now() > until) return `守了 ${minutes} 分钟`;
+      const owner = back ? findPlayer(bot, back)?.entity : null;
+      if (owner && owner.position.distanceTo(home) < 3) return `${back} 回来了`;
       const center = username ? findPlayer(bot, username)?.entity?.position : home;
       // 苦力怕：有把握（有弓、或拿着武器且血量健康）就打，否则躲开
       const plan = creeperPlan(agent);
@@ -527,7 +531,7 @@ function digAt(agent, input, ctx) {
   }, taskOpts(ctx));
 }
 
-function bedError(err) {
+export function bedError(err) {
   const m = String(err?.message ?? err);
   if (/night|thunder/i.test(m)) return '现在不是晚上也不是雷雨天，睡不了';
   if (/monster/i.test(m)) return '附近有怪物，不能睡';
@@ -1094,8 +1098,12 @@ export const ACTIONS = [
   },
   {
     name: 'guard',
-    description: '护卫模式（长任务，直到 stop 或有新任务）：自动攻击靠近的敌对生物。填 player 就跟着保护这个玩家，不填就守在当前位置。',
-    input_schema: schema({ player: str('要保护的玩家名；守在原地时不填') }, []),
+    description: '护卫模式（长任务，直到 stop 或有新任务）：自动攻击靠近的敌对生物。填 player 就跟着保护这个玩家；不填就守在 x,y,z（不填坐标就是当前位置）。minutes 守多久；until_player 这个玩家回到守卫点就结束。',
+    input_schema: schema({
+      player: str('要保护的玩家名；守在某个地方时不填'),
+      x: numType('守卫点 x，可不填'), y: numType('守卫点 y，可不填'), z: numType('守卫点 z，可不填'),
+      minutes: numType('守多久（分钟），可不填'), until_player: str('这个玩家回到守卫点就结束，可不填'),
+    }, []),
     run: (agent, input, ctx) => guard(agent, input, ctx),
   },
   {
@@ -1299,11 +1307,11 @@ export const ACTIONS = [
   },
   {
     name: 'duel',
-    description: 'PVP 决斗（娱乐切磋）。action=start 接受或发起决斗（difficulty：easy / normal / hard）；surrender 对方认输；stats 查战绩。默认“切磋”规则，打到只剩几颗心就停，不会真打死。',
+    description: 'PVP 决斗（娱乐切磋）。action=start 接受或发起决斗（difficulty：easy / normal / hard / cheat 作弊＝临时换一套顶级附魔装备）；surrender 对方认输；stats 查战绩。默认“切磋”规则，打到只剩几颗心就停，不会真打死。',
     input_schema: schema({
       action: choice(['start', 'surrender', 'stats'], '操作'),
       player: str('对手的玩家名'),
-      difficulty: choice(['easy', 'normal', 'hard'], '难度，可不填'),
+      difficulty: choice(['easy', 'normal', 'hard', 'cheat'], '难度，可不填'),
     }, ['action', 'player']),
     run: async (agent, { action, player, difficulty }, ctx) => {
       if (action === 'stats') return agent.duels.statsText(String(player));

@@ -240,10 +240,14 @@ export function installInteractions(agent, bot) {
     if (dead) {
       const e = findPlayer(bot, dead)?.entity;
       const where = e ? `(${Math.floor(e.position.x)}, ${Math.floor(e.position.y)}, ${Math.floor(e.position.z)})` : '';
-      agent.say(`${dead}！你没事吧？！${where ? `我去 ${where} 帮你看着掉落物喵` : ''}`);
+      // 开了死亡不掉落就没有掉落物可守，陪着就好
+      const guardDrops = e && !agent.keepInventory && agent.chat.isOwner(dead) && cfg.guard_death_drops
+        && (!agent.tasks.current || agent.tasks.current.name === 'companion');
+      agent.say(`${dead}！你没事吧？！${guardDrops && where ? `我去 ${where} 帮你守着掉落物喵` : ''}`);
       agent.events.push('bot', { what: 'player_death', by: dead, detail: text });
-      if (e && agent.chat.isOwner(dead) && cfg.guard_death_drops && (!agent.tasks.current || agent.tasks.current.name === 'companion')) {
-        agent.runAction('goto', { x: e.position.x, y: e.position.y, z: e.position.z }, { waitMs: 0, by: { source: 'self' } }).catch(() => {});
+      if (guardDrops) {
+        // 守在那里、打靠近的怪；5 分钟（掉落物消失）或者主人回来了就结束
+        agent.runAction('guard', { x: e.position.x, y: e.position.y, z: e.position.z, minutes: 5, until_player: dead }, { waitMs: 0, by: { source: 'self' } }).catch(() => {});
       }
     }
   });

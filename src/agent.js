@@ -25,7 +25,7 @@ import { Affection } from './affection.js';
 import { ChestIndex } from './chestIndex.js';
 import { startViaProxy } from './proxy/viaproxy.js';
 import fs from 'node:fs';
-import { AFFECTION_FILE, CHESTS_FILE, HOME_FILE, MEMORY_FILE, REQUESTS_FILE } from './paths.js';
+import { AFFECTION_FILE, BOATS_FILE, CHESTS_FILE, HOME_FILE, MEMORY_FILE, REQUESTS_FILE } from './paths.js';
 import { RequestStore } from './requests.js';
 import { getLog } from './log.js';
 import { componentText, fmtPos, sleep, withTimeout } from './util.js';
@@ -99,8 +99,35 @@ export class Agent extends EventEmitter {
     }
     this.assistTarget = null;
     this.worldSeed = null;
-    this.myBoats = new Set();
+    // 自己放的船（困怪用）：记在 runtime/boats.json，重启后也认得；船的编号变了（世界重开）就按位置认
+    try {
+      this.boatSpots = JSON.parse(fs.readFileSync(BOATS_FILE, 'utf8')).filter((b) => Date.now() - b.at < 86_400_000);
+    } catch {
+      this.boatSpots = [];
+    }
+    this.myBoats = new Set(this.boatSpots.map((b) => b.id));
     this.on('panel', (ev) => this.onPanel(ev));
+  }
+
+  rememberBoat(boat) {
+    this.myBoats.add(boat.id);
+    const { x, y, z } = boat.position;
+    this.boatSpots = [...this.boatSpots.filter((b) => b.id !== boat.id), { id: boat.id, x, y, z, at: Date.now() }];
+    this.saveBoats();
+  }
+
+  forgetBoat(id) {
+    this.myBoats.delete(id);
+    this.boatSpots = this.boatSpots.filter((b) => b.id !== id);
+    this.saveBoats();
+  }
+
+  saveBoats() {
+    try {
+      fs.writeFileSync(BOATS_FILE, `${JSON.stringify(this.boatSpots)}\n`);
+    } catch {
+      // 写不了就只记在内存里
+    }
   }
 
   // 记住家（睡过的床）的位置，重启后也记得

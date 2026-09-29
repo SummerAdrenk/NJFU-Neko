@@ -21,9 +21,9 @@ export const MODES = {
 MODES.作弊 = { ...MODES.极限, cheat: true };
 export const MODE_NAMES = Object.keys(MODES);
 export const MODE_DESC = {
-  普通: '会用盾牌、弓箭、药水和金苹果救急；不跳劈、不船困，剩 2 颗心就撤',
-  困难: '岩浆桶先烫再打、跳劈、横扫、边打边退、船困怪、水桶冲开怪群、垫高躲怪、按引信打苦力怕，剩 1 颗心才撤',
-  极限: '困难的全部 + 鞘翅撤离、附魔金苹果，剩半颗心才撤',
+  普通: '会用盾牌、弓箭、药水和金苹果救急；不跳劈、不船困，剩 3 滴血就撤',
+  困难: '岩浆桶先烫再打、跳劈、横扫、边打边退、船困怪、水桶冲开怪群、垫高躲怪、按引信打苦力怕，剩 1 滴血才撤',
+  极限: '困难的全部 + 鞘翅撤离、附魔金苹果，剩 1 滴血才撤',
   作弊: '极限 + 临时的顶级附魔装备（下界合金或钻石套）、附魔金苹果、不死图腾、各种药水，切回来时收回',
 };
 const ALIASES = { normal: '普通', easy: '普通', hard: '困难', extreme: '极限', max: '极限', cheat: '作弊' };
@@ -51,19 +51,22 @@ const TEMP = 'custom_data={neko_temp:1b}';
 const TIERS = { 下界合金: 'netherite', 钻石: 'diamond', netherite: 'netherite', diamond: 'diamond' };
 const ench = (map) => `enchantments={${Object.entries(map).map(([k, v]) => `"minecraft:${k}":${v}`).join(',')}}`;
 
-function cheatKit(tier, { gapples = 4, totems = 2, potions = true, elytra = false } = {}) {
+// duel：决斗用，只发盔甲、剑、斧、盾；fire：剑上要不要火焰附加（决斗切磋时不要，免得打完了对方还在烧）
+export function cheatKit(tier, { gapples = 4, totems = 2, potions = true, elytra = false, duel = false, fire = true } = {}) {
   const t = TIERS[tier] ?? 'netherite';
   const armor = { protection: 4, unbreaking: 3, mending: 1 };
-  const kit = [
+  const gear = [
     [`${t}_helmet`, { ...armor, respiration: 3, aqua_affinity: 1 }, 1],
     [`${t}_chestplate`, armor, 1],
     [`${t}_leggings`, { ...armor, swift_sneak: 3 }, 1],
     [`${t}_boots`, { ...armor, feather_falling: 4, depth_strider: 3 }, 1],
-    [`${t}_sword`, { sharpness: 5, looting: 3, fire_aspect: 2, sweeping_edge: 3, unbreaking: 3, mending: 1 }, 1],
+    [`${t}_sword`, { sharpness: 5, looting: 3, ...(fire ? { fire_aspect: 2 } : {}), sweeping_edge: 3, unbreaking: 3, mending: 1 }, 1],
     [`${t}_axe`, { sharpness: 5, efficiency: 5, unbreaking: 3, mending: 1 }, 1],
-    ['bow', { power: 5, punch: 1, flame: 1, infinity: 1, unbreaking: 3 }, 1],
+    ...(duel ? [] : [['bow', { power: 5, punch: 1, flame: 1, infinity: 1, unbreaking: 3 }, 1]]),
     ['shield', { unbreaking: 3, mending: 1 }, 1],
-  ].map(([item, e, n]) => `${item}[${ench(e)},${TEMP}] ${n}`);
+  ];
+  const kit = gear.map(([item, e, n]) => `${item}[${ench(e)},${TEMP}] ${n}`);
+  if (duel) return kit;
   kit.push(`arrow[${TEMP}] 64`, `ender_pearl[${TEMP}] 16`, `golden_apple[${TEMP}] 16`, `cooked_beef[${TEMP}] 32`, `oak_boat[${TEMP}] 1`, `water_bucket[${TEMP}] 1`,
     `lava_bucket[${TEMP}] 1`, `cobblestone[${TEMP}] 64`);
   if (gapples > 0) kit.push(`enchanted_golden_apple[${TEMP}] ${gapples}`);
@@ -81,7 +84,7 @@ function cheatKit(tier, { gapples = 4, totems = 2, potions = true, elytra = fals
 
 export async function giveCheatKit(agent, opts = {}) {
   const bot = agent.bot;
-  if (agent.identity.opLevel < 2) throw new Error('作弊模式要管理员权限（/give）');
+  if (agent.identity.opLevel < 2) throw new Error('作弊装备要管理员权限（/give）');
   const free = bot.inventory.emptySlotCount();
   const kit = cheatKit(opts.tier ?? agent.cfg.combat?.cheat_tier, opts);
   agent.cheatBuckets ??= bucketCount(bot);

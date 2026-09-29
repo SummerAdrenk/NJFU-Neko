@@ -198,6 +198,7 @@ export const MENU_ACTIONS = {
   duel_easy: { label: '简单', text: '#决斗 简单', tip: '不走位、不跳劈、不举盾，出手慢' },
   duel_normal: { label: '普通', text: '#决斗 普通', tip: '左右走位、举盾，会用斧子破你的盾；不跳劈' },
   duel_hard: { label: '困难', text: '#决斗 困难', tip: '走位、跳劈暴击、举盾、斧子破盾' },
+  duel_cheat: { label: '作弊', text: '#决斗 作弊', tip: '困难的打法，再临时换上一套顶级附魔装备（打完收回）' },
   pet: { label: '摸摸头', text: '#摸头', tip: '摸摸她的头，好感 +1' },
   hug: { label: '抱抱', text: '#抱抱', tip: '她会跑过来抱你，好感 +1' },
   dance: { label: '跳支舞', text: '#跳舞', tip: '转圈、蹦跳、冒爱心' },
@@ -223,8 +224,8 @@ export function duelDialog(agent) {
       key('选个难度，倒计时后开打'), br(),
       { text: lethal ? '现在是真打：打到有一方倒下（困难还会用岩浆桶）' : '切磋：打到只剩几颗心就停，不会真的打死', color: 'yellow' },
     ])],
-    actions: ['duel_easy', 'duel_normal', 'duel_hard'].map((id) => menuButton(agent, id)),
-    columns: 3,
+    actions: ['duel_easy', 'duel_normal', 'duel_hard', 'duel_cheat'].map((id) => menuButton(agent, id)),
+    columns: 2,
     exit_action: { label: '算了', width: 150 },
     pause: false,
   };

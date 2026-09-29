@@ -139,8 +139,8 @@ check('菜单 非主人没有主人专用按钮', !JSON.stringify(guestMenu).inc
 check('菜单 坐着时换成站起来', JSON.stringify(view.menuDialog({ ...fakeAgent, seated: true }, 'Steve')).includes('#起来'));
 check('菜单 按钮都对应快捷命令', Object.values(view.MENU_ACTIONS).every((a) => a.text.startsWith('#') && a.label && a.tip));
 const duelBtn = modMenu.actions.find((a) => a.label === 'PVP 决斗');
-check('菜单 决斗先选难度', duelBtn?.action.type === 'show_dialog' && duelBtn.action.dialog.actions.length === 3
-  && duelBtn.action.dialog.actions.some((a) => a.action.command === '/njfu ui duel_hard'));
+check('菜单 决斗先选难度（含作弊）', duelBtn?.action.type === 'show_dialog' && duelBtn.action.dialog.actions.length === 4
+  && duelBtn.action.dialog.actions.some((a) => a.action.command === '/njfu ui duel_cheat'));
 const armorBot = {
   inventory: { slots: { 5: { name: 'diamond_helmet' }, 6: { name: 'diamond_chestplate' }, 7: { name: 'diamond_leggings' }, 8: { name: 'diamond_boots' } } },
   getEquipmentDestSlot: (d) => ({ head: 5, torso: 6, legs: 7, feet: 8 })[d],
@@ -156,14 +156,21 @@ const ballistics = await import('../src/bot/ballistics.js');
 const flagsFor = (mode, extra = {}) => modes.combatFlags({ cfg: { ...cfg, combat: { ...cfg.combat, mode, ...extra } } });
 check('模式 普通不跳劈', !flagsFor('普通').crits && flagsFor('困难').crits);
 check('模式 困难以上用岩浆', flagsFor('困难').lava && flagsFor('极限').lava && !flagsFor('普通').lava);
-check('撤退 困难 1 颗心、普通 2 颗、极限半颗', combat.retreatHealth({ cfg }, flagsFor('困难')) === 2
-  && combat.retreatHealth({ cfg }, flagsFor('普通')) === 4 && combat.retreatHealth({ cfg }, flagsFor('极限')) === 1);
+check('撤退 困难、极限 1 滴血，普通 3 滴血', combat.retreatHealth({ cfg }, flagsFor('困难')) === 1
+  && combat.retreatHealth({ cfg }, flagsFor('普通')) === 3 && combat.retreatHealth({ cfg }, flagsFor('极限')) === 1);
+check('撤退 配置成 0 就不撤', combat.retreatHealth({ cfg: { ...cfg, behavior: { ...cfg.behavior, retreat_health: 0 } } }, flagsFor('困难')) === 0);
+const socialMod = await import('../src/bot/social.js');
+check('睡觉 口令', ['睡觉', '去睡觉', '睡吧', '一起睡', '睡觉啦～'].every((t) => socialMod.SLEEP_WORDS.test(t)) && !socialMod.SLEEP_WORDS.test('你睡觉了吗'));
+check('睡觉 时间', socialMod.canSleepNow({ time: { timeOfDay: 13000 } }) && !socialMod.canSleepNow({ time: { timeOfDay: 23692 } }) && socialMod.canSleepNow({ time: { timeOfDay: 6000 }, thunderState: 1 }));
 const fireIdx = registry.entitiesByName.zombie.metadataKeys.indexOf('shared_flags');
 check('岩浆 能烫僵尸', combat.canBurn(fakeBot, ent('zombie')));
 check('岩浆 不烫不怕火的、末影人、女巫', !combat.canBurn(fakeBot, ent('blaze')) && !combat.canBurn(fakeBot, ent('enderman')) && !combat.canBurn(fakeBot, ent('witch')));
 check('岩浆 已经在烧的不再烫', fireIdx >= 0 && !combat.canBurn(fakeBot, ent('zombie', { metadata: Object.assign([], { [fireIdx]: 1 }) })));
 check('模式 开关能关掉', !flagsFor('极限', { lava: false }).lava);
 check('模式 作弊', flagsFor('作弊').cheat === true && flagsFor('cheat').mode === '作弊');
+const duelKit = modes.cheatKit('钻石', { duel: true, fire: false }).join(' ');
+check('决斗 作弊装备：只有盔甲武器盾，切磋时不带火焰附加', duelKit.includes('diamond_sword') && duelKit.includes('shield')
+  && !duelKit.includes('fire_aspect') && !duelKit.includes('golden_apple') && !duelKit.includes('bow['));
 check('药水 亡灵用治疗', potionsMod.offensiveKindsFor({ name: 'zombie' }).includes('healing') && !potionsMod.offensiveKindsFor({ name: 'zombie' }).includes('harming'));
 check('药水 普通怪用伤害', potionsMod.offensiveKindsFor({ name: 'spider' }).includes('harming'));
 const ps = ballistics.solveBallistic(new Vec3(0, 65.5, 0), new Vec3(4, 64, 0), ballistics.SPLASH_POTION);

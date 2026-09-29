@@ -492,9 +492,11 @@ function lavaSafe(agent, pos) {
   return !owner || owner.position.distanceTo(pos.offset(0.5, 0, 0.5)) >= 2.5;
 }
 
-// 撤退线：配置里的撤退血量（默认 2 = 1 颗心）再按模式调整（普通 +2，极限和作弊 -1）
+// 撤退线：配置里的撤退血量（默认 1 滴血；0 = 不撤退）再按模式调整（普通 +2，极限、作弊 -1，最低 1 滴血）
 export function retreatHealth(agent, flags = combatFlags(agent)) {
-  return Math.max(0, Number(agent.cfg.behavior?.retreat_health ?? 2) + (flags.retreat_bonus ?? 0));
+  const line = Number(agent.cfg.behavior?.retreat_health ?? 1);
+  if (!(line > 0)) return 0;
+  return Math.max(1, line + (flags.retreat_bonus ?? 0));
 }
 
 // 对方（玩家）正在举盾：手在用、用的那只手拿着盾牌
@@ -885,15 +887,12 @@ export class Fighter {
       }
     }
     if (bot.health < 16 && await this.snack()) return;
-    // 被围住、血又不多了：水桶把怪冲开，或者垫方块躲上去在上面接着打（不撤）
-    const crowd = meleeHostiles(this.agent, 5, target).length + 1;
-    if (!this.perched && !this.boss && crowd >= 3 && bot.health <= Math.max(retreatAt + 4, 6)) {
-      if (await this.waterWall()) return;
-      if (await this.pillar()) return;
-    }
-    // 真的快不行了（默认只剩 1 颗心）才撤：撤出来吃点东西，一会儿血回上来再打，不马上冲回去
+    // 到了撤退线（默认只剩 1 滴血）：被围住就先用水桶把怪冲开、或者垫方块躲上去（在上面接着打），都不行才撤。
+    // 撤出来吃点东西，一会儿血回上来再打，不马上冲回去
     const limit = this.boss ? Math.min(retreatAt, 2) : retreatAt;
     if (limit > 0 && bot.health <= limit && !this.perched) {
+      const crowd = meleeHostiles(this.agent, 5, target).length + 1;
+      if (!this.boss && crowd >= 3 && (await this.waterWall() || await this.pillar())) return;
       this.agent.retreatUntil = Date.now() + 12_000;
       this.lower();
       this.stopMove();
@@ -956,7 +955,7 @@ export class Fighter {
 
   // 岩浆桶点一下（瞬放瞬收）：倒在敌人脚下，等一两刻它着了火（能烧 15 秒），马上用空桶收回，岩浆来不及流开。
   // 能烫先烫：困难以上的模式，开打前、怪群里先把够得着的都烫一遍再砍；force（决斗真打、主人让打玩家时）不看模式。
-  // 不怕火的、已经在烧的、末影人（一烫就瞬移）、女巫（会喝抗火）不烫；下雨天露天的也不烫（雨马上把火浇灭）。
+  // 不怕火的、已经在烧的、末影人（一烫就瞬移）、女巫（会喝抗火）不烫。下雨天照样烫：碰到岩浆那一下的伤害不受雨影响。
   async lavaStrike(target, { force = false } = {}) {
     const bot = this.bot;
     if ((!this.flags.lava && !force) || Date.now() < (this.nextLava ?? 0)) return false;
@@ -998,7 +997,7 @@ export class Fighter {
 
   // 找倒岩浆的格子：够得着的敌人（目标和身边 6 格内的）脚下，往它走的方向提前一点；挤在同一格的一起烫。
   // 要求：脚下是实心方块、格子空着（或者只有草）、离眼睛 4.4 格内、自己不站在里面、格子里只有要烫的敌人
-  // （没有主人、别的玩家、宠物、掉落物），紧挨着没有会烧的方块和水，不是下雨天的露天。
+  // （没有主人、别的玩家、宠物、掉落物），紧挨着没有会烧的方块和水。
   lavaSpot(target) {
     const bot = this.bot;
     const now = Date.now();
@@ -1015,7 +1014,6 @@ export class Fighter {
       if (Math.max(Math.abs(me.x - feet.x - 0.5), Math.abs(me.z - feet.z - 0.5)) < 0.95 && me.y > feet.y - 1.8 && me.y < feet.y + 1) continue;
       const cell = bot.blockAt(feet);
       if (!solid(bot.blockAt(feet.offset(0, -1, 0))) || !cell || !LAVA_REPLACEABLE.test(cell.name)) continue;
-      if (bot.isRaining && (cell.skyLight ?? 0) >= 15) continue;
       const box = { minX: feet.x, maxX: feet.x + 1, minY: feet.y, maxY: feet.y + 1, minZ: feet.z, maxZ: feet.z + 1 };
       const inside = Object.values(bot.entities).filter((o) => o !== bot.entity && o.position && overlaps(box, bbox(o)));
       if (inside.some((o) => !enemies.includes(o)) || !lavaSafe(this.agent, feet)) continue;
@@ -1221,7 +1219,7 @@ export class Fighter {
       bot.deactivateItem();
       const boat = await spawned;
       if (!boat) return false;
-      this.agent.myBoats.add(boat.id);
+      this.agent.rememberBoat(boat);
       this.boats.add(boat.id);
       this.agent.events.push('bot', { what: 'combat', detail: `放船困 ${target.name}` });
       // 退着走，让船挡在中间，等怪走进去
@@ -1243,36 +1241,10 @@ export class Fighter {
     }
   }
 
-  // 打完把自己放的船敲掉捡回来（船里还有生物的不动）。
+  // 打完把附近自己放的船都敲掉捡回来（包括以前漏收的）
   async collectBoats() {
-    const bot = this.bot;
-    for (const id of [...this.boats]) {
-      this.boats.delete(id);
-      const boat = bot.entities[id];
-      if (!boat) {
-        this.agent.myBoats.delete(id);
-        continue;
-      }
-      if (boat.passengers?.length) continue;
-      try {
-        if (flat(bot.entity.position, boat.position) > 2.8) {
-          await gotoGoal(this.agent, new goals.GoalNear(boat.position.x, boat.position.y, boat.position.z, 2), { timeoutMs: 8000 });
-        }
-        const where = boat.position.clone();
-        for (let i = 0; i < 6 && boat.isValid; i++) {
-          await bot.lookAt(boat.position.offset(0, 0.3, 0), true);
-          bot.attack(boat);
-          await sleep(250);
-        }
-        this.agent.myBoats.delete(id);
-        await sleep(300);
-        const drop = Object.values(bot.entities).find((e) => e.name === 'item' && e.position.distanceTo(where) < 4
-          && /(boat|raft)$/.test(e.getDroppedItem?.()?.name ?? ''));
-        if (drop) await gotoGoal(this.agent, new goals.GoalNear(drop.position.x, drop.position.y, drop.position.z, 0.5), { timeoutMs: 5000 }).catch(() => {});
-      } catch (err) {
-        log.debug(`收船失败：${err.message}`);
-      }
-    }
+    this.boats.clear();
+    await collectOwnBoats(this.agent, { radius: 16 });
   }
 
   // ── 通用近战 ──
@@ -1805,8 +1777,52 @@ export async function fight(agent, target, signal, timeoutMs = 45_000, opts = {}
 
 const CALM_TASKS = new Set(['companion', 'follow', 'come', 'guard', 'goto', 'pickup']);
 
+// 把自己放的船敲掉捡回来：船里还坐着怪的先不动（那只怪会被当成目标打掉），附近还有怪（主人可能正挨打）就先不收。
+// 困怪的船打完就收；漏掉的（比如中途重启了）陪伴时顺手收。返回收了几条。
+export async function collectOwnBoats(agent, { radius = 16, signal } = {}) {
+  const bot = agent.bot;
+  let n = 0;
+  for (const id of [...agent.myBoats]) {
+    if (meleeHostiles(agent, 10).length) break;
+    const boat = bot.entities[id];
+    if (!boat?.isValid || boat.passengers?.length || flat(bot.entity.position, boat.position) > radius) continue;
+    try {
+      if (flat(bot.entity.position, boat.position) > 2.8) {
+        await gotoGoal(agent, new goals.GoalNear(boat.position.x, boat.position.y, boat.position.z, 2), { signal, timeoutMs: 8000 });
+      }
+      const where = boat.position.clone();
+      for (let i = 0; i < 6 && boat.isValid; i++) {
+        await bot.lookAt(boat.position.offset(0, 0.3, 0), true);
+        bot.attack(boat);
+        await sleep(250, signal);
+      }
+      if (boat.isValid) continue;
+      agent.forgetBoat(id);
+      n += 1;
+      await sleep(300, signal);
+      const drop = Object.values(bot.entities).find((e) => e.name === 'item' && e.position.distanceTo(where) < 4
+        && /(boat|raft)$/.test(e.getDroppedItem?.()?.name ?? ''));
+      if (drop) await gotoGoal(agent, new goals.GoalNear(drop.position.x, drop.position.y, drop.position.z, 0.5), { signal, timeoutMs: 5000 }).catch(() => {});
+    } catch (err) {
+      if (signal?.aborted) throw err;
+      log.debug(`收船失败：${err.message}`);
+    }
+  }
+  return n;
+}
+
 export function installCombatSense(agent, bot) {
   agent.myBoats ??= new Set();
+  // 世界重开后船的编号会变：在记下的位置附近出现的船，就是自己以前放的
+  bot.on('entitySpawn', (e) => {
+    if (!agent.boatSpots?.length || !isVehicleItemEntity(e) || !/(boat|raft)$/.test(e.name ?? '') || agent.myBoats.has(e.id)) return;
+    const spot = agent.boatSpots.find((b) => Math.hypot(b.x - e.position.x, b.z - e.position.z) < 2 && Math.abs(b.y - e.position.y) < 2);
+    if (spot) {
+      agent.myBoats.add(e.id);
+      spot.id = e.id;
+      agent.saveBoats?.();
+    }
+  });
   let blocking = false;
   let holdUntil = 0;
   let lastAllyPotion = 0;

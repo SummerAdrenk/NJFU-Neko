@@ -5,7 +5,7 @@ import {
   countItem, findNearestBlock, findPlayer, fleeFrom, isAliveEntity, nearestCreeper, nearestThreat, protectedReason, summarizeItems,
 } from './helpers.js';
 import { chestPartner, smeltCore, withChest } from './actions.js';
-import { canEngage, creeperPlan, fight, outnumbered, pickTarget, retreatFromCrowd, retreatHealth } from './combat.js';
+import { canEngage, collectOwnBoats, creeperPlan, fight, outnumbered, pickTarget, retreatFromCrowd, retreatHealth } from './combat.js';
 import { pickFood } from './survival.js';
 import { freeSeat, isPortalNear, mountEntity, usePortal } from './movement.js';
 import { getLog } from '../log.js';
@@ -29,6 +29,7 @@ export async function accompanyLoop(agent, username, task, { minDist = 2, maxDis
   let lastTp = 0;
   let nextHover = Date.now() + 4000;
   let following = null;
+  let lastBoatTidy = 0;
   let lastSeen = null;
   for (;;) {
     if (task.signal.aborted) throw abortError(task.signal);
@@ -64,8 +65,8 @@ export async function accompanyLoop(agent, username, task, { minDist = 2, maxDis
       following = null;
       continue;
     }
-    // 怪太多（尸潮之类）而且血快没了：先撤，不硬拼；血多的时候照样打（先烫再砍）
-    if (outnumbered(agent) && bot.health <= retreatHealth(agent) + 2) {
+    // 怪太多（尸潮之类）而且血到撤退线了：先撤，不硬拼；没到就照样打（先烫再砍）
+    if (outnumbered(agent) && bot.health <= retreatHealth(agent)) {
       following = null;
       await retreatFromCrowd(agent, task.signal).catch((err) => {
         if (task.signal.aborted) throw err;
@@ -85,6 +86,14 @@ export async function accompanyLoop(agent, username, task, { minDist = 2, maxDis
       following = null;
       await sleep(200, task.signal);
       continue;
+    }
+    // 没有怪要打：把以前困怪留下的空船收回来（船里还困着怪的，那只怪上面已经当成目标打了）
+    if (agent.myBoats?.size && Date.now() - lastBoatTidy > 10_000) {
+      lastBoatTidy = Date.now();
+      if (await collectOwnBoats(agent, { radius: 24, signal: task.signal })) {
+        following = null;
+        continue;
+      }
     }
 
     // 坐着（#坐下）：原地坐着陪着，不跟着走；有怪照样起来打（fight 会先站起来）。座位没了（被传送、盔甲架被清掉）就算站起来了

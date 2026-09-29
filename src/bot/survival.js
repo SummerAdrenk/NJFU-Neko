@@ -46,6 +46,24 @@ export function wantsToEat(bot) {
   return bot.food <= 14 || bot.health < 20;
 }
 
+// 挨打时可以换成自卫的任务；自己会处理身边的怪的任务（不打断）
+const DEFEND_OVER = new Set(['companion', 'come', 'goto', 'pickup']);
+const OWN_FIGHTS = new Set(['follow', 'guard', 'sleep', 'duel', 'defend', 'flee', 'attack', 'hunt']);
+
+// 查游戏规则 keep_inventory（查询命令的结果只发给执行的人，不会在管理员聊天栏里广播）
+export async function detectKeepInventory(agent, bot) {
+  if (!agent.online || agent.identity.opLevel < 2) return;
+  for (const rule of ['keep_inventory', 'keepInventory']) {
+    const replies = await agent.chat.capture(async () => bot.chat(`/gamerule ${rule}`), 1500);
+    const hit = replies.map((r) => /\b(true|false)\s*$/i.exec(r.trim())).find(Boolean);
+    if (hit) {
+      agent.keepInventory = hit[1].toLowerCase() === 'true';
+      log.info(`死亡不掉落：${agent.keepInventory ? '开' : '关'}`);
+      return;
+    }
+  }
+}
+
 export function installSurvival(agent, bot) {
   const cfg = agent.cfg.behavior;
   let eating = false;
@@ -92,18 +110,22 @@ export function installSurvival(agent, bot) {
 
   const runSelf = (name, desc, fn) => agent.tasks.run(name, desc, fn, { waitMs: 0, by: { source: 'self' } }).catch(() => {});
 
-  // 被打时还手：伤害事件里带有攻击者（source）。跟随/陪伴/护卫的循环自己会处理身边的怪，这里只管空闲时。
+  // 这个世界开没开“死亡不掉落”（keep_inventory）：开了的话，主人死了也不用去守掉落物
+  bot.once('spawn', () => setTimeout(() => detectKeepInventory(agent, bot).catch(() => {}), 3000));
+
+  // 被打时还手：伤害事件里带有攻击者（source）。空闲、陪伴、走路、捡东西时挨打就还手；干别的活时血掉到一半也先顾自己。
+  // 跟随、护卫、睡觉、决斗这些自己会处理身边的怪，不打断。
   bot.on('entityHurt', (entity, source) => {
     if (entity !== bot.entity || !cfg.self_defense || agent.fighting || bot.isSleeping) return;
     const cur = agent.tasks.current;
-    if (cur && cur.name !== 'companion') return;
+    if (cur && (OWN_FIGHTS.has(cur.name) || (!DEFEND_OVER.has(cur.name) && bot.health > 10))) return;
     if (source?.type === 'player') return; // 被玩家打由好感度系统处理，不还手
     // 记下谁打了我：被激怒的中立生物（末影人、僵尸猪灵……）要还手
     if (source?.id != null && source !== bot.entity) noteAttacker(agent, source, 'self');
     const attacker = source && source !== bot.entity ? source : nearestThreat(agent, bot.entity.position, 6, canEngage);
     if (!attacker?.position) return;
-    // 被怪群围住、血也快没了：先撤（往主人那边或者背对怪群跑）；血多的时候照样迎战
-    if (outnumbered(agent) && bot.health <= retreatHealth(agent) + 2) {
+    // 被怪群围住、血也到撤退线了：先撤（往主人那边或者背对怪群跑）；没到就照样迎战
+    if (outnumbered(agent) && bot.health <= retreatHealth(agent)) {
       runSelf('flee', '被怪群围住，先撤', async (task) => {
         await retreatFromCrowd(agent, task.signal);
         return '撤出来了';

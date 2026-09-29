@@ -4,6 +4,7 @@ import path from 'node:path';
 import { makeMovements } from './createBot.js';
 import { equipBestWeapon, findPlayer } from './helpers.js';
 import { Fighter } from './combat.js';
+import { combatFlags, giveCheatKit, removeCheatKit } from './combatModes.js';
 import { eatBest } from './survival.js';
 import { RUNTIME } from '../paths.js';
 import { abortError, sleep } from '../util.js';
@@ -14,6 +15,8 @@ const LEVELS = {
   easy: { name: '简单', interval: 1100, strafe: false, crit: false, shield: false, axeBreak: false, lava: false, reach: 2.6 },
   normal: { name: '普通', interval: 0, strafe: true, crit: false, shield: true, axeBreak: true, lava: false, reach: 3.0 },
   hard: { name: '困难', interval: 0, strafe: true, crit: true, shield: true, axeBreak: true, lava: true, reach: 3.0 },
+  // 作弊：困难的打法 + 临时换上一套顶级附魔装备，打完收回
+  cheat: { name: '作弊', interval: 0, strafe: true, crit: true, shield: true, axeBreak: true, lava: true, reach: 3.0, cheat: true },
 };
 
 
@@ -70,9 +73,17 @@ export class Duels {
     const username = p.username;
     return agent.tasks.run('duel', `和 ${username} 决斗（${level.name}）`, async (task) => {
       this.active = { player: username, surrendered: false };
+      let kit = false;
       try {
+        // 作弊难度：发一套临时的顶级附魔装备（本来就在作弊模式就不用再发）；切磋时剑上不带火焰附加
+        if (level.cheat && combatFlags(agent).mode !== '作弊') {
+          if (agent.identity.opLevel < 2) throw new Error('作弊难度要管理员权限（发临时装备）');
+          await giveCheatKit(agent, { tier: agent.cfg.combat?.cheat_tier, duel: true, fire: Boolean(cfg.lethal) });
+          kit = true;
+        }
         return await this.fightLoop(task, username, level, cfg);
       } finally {
+        if (kit) await removeCheatKit(agent).catch(() => {});
         this.last = { player: username, endedAt: Date.now() };
         this.active = null;
         if (bot.usingHeldItem) bot.deactivateItem();
@@ -90,7 +101,9 @@ export class Duels {
     const playerHealth = (e) => Number(e?.metadata?.[healthKey] ?? 20);
     const weapon = await equipBestWeapon(bot);
     await bot.armorManager?.equipAll?.();
-    const maxHit = Math.ceil((WEAPON_DAMAGE[weapon] ?? 1) * 1.5) + 1;
+    // 最重的一击：武器伤害 + 锋利加成，再按暴击 ×1.5；切磋时对方血量低于这个就停，保证不会一下打死
+    const sharp = bot.heldItem?.enchants?.find?.((en) => /sharpness/.test(en.name))?.lvl ?? (level.cheat ? 5 : 0);
+    const maxHit = Math.ceil(((WEAPON_DAMAGE[weapon] ?? 1) + (sharp ? 0.5 * sharp + 0.5 : 0)) * 1.5) + 1;
     const mercy = cfg.lethal ? 0 : Math.max(Number(cfg.mercy_health ?? 6), maxHit);
 
     say(`${username} 向我发起了决斗！难度：${level.name}，${cfg.lethal ? '真打' : '切磋（打到只剩几颗心就停）'}`);
