@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { loadConfig } from './config.js';
+import { applyOverrides } from './settings.js';
 import { EventLog, getLog, logger } from './log.js';
 import { EVENTS_FILE, LOG_DIR, ROOT } from './paths.js';
 import { Agent } from './agent.js';
@@ -50,6 +51,8 @@ async function main() {
   logger.write('info', '启动', [`NJFU智慧猫娘 v${version}，Node ${process.versions.node}，${process.platform}，配置 ${cfg.file}`], { toConsole: false });
   log.info(`日志文件：${path.relative(ROOT, logger.currentFile)}（出问题时可以运行 npm run ctl -- report 生成问题报告）`);
   for (const warning of cfg.warnings) log.warn(warning);
+  const overridden = applyOverrides(cfg);
+  if (overridden) log.info(`应用了游戏里 #设置 改过的 ${overridden} 项设置（runtime/overrides.json）`);
   checkSecretsNotTracked(cfg);
 
   const events = new EventLog(EVENTS_FILE);

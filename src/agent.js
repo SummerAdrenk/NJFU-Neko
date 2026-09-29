@@ -24,7 +24,8 @@ import { MemoryStore } from './memory.js';
 import { Affection } from './affection.js';
 import { ChestIndex } from './chestIndex.js';
 import { startViaProxy } from './proxy/viaproxy.js';
-import { AFFECTION_FILE, CHESTS_FILE, MEMORY_FILE } from './paths.js';
+import { AFFECTION_FILE, CHESTS_FILE, MEMORY_FILE, REQUESTS_FILE } from './paths.js';
+import { RequestStore } from './requests.js';
 import { getLog } from './log.js';
 import { componentText, fmtPos, sleep, withTimeout } from './util.js';
 
@@ -80,6 +81,7 @@ export class Agent extends EventEmitter {
     this.memory = new MemoryStore(MEMORY_FILE);
     this.affection = new Affection(AFFECTION_FILE, { events, cfg: cfg.affection });
     this.chestIndex = new ChestIndex(CHESTS_FILE);
+    this.requests = new RequestStore(REQUESTS_FILE);
     this.serverInfo = new ServerInfo(this);
     this.social = new Social(this);
     this.duels = new Duels(this);

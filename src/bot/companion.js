@@ -2,8 +2,9 @@
 // 缺装备/缺吃的时去箱子里拿；离得太远就传送过去。
 import { goals, makeMovements } from './createBot.js';
 import {
-  countItem, findPlayer, fleeFrom, nearestCreeper, nearestThreat, summarizeItems,
+  countItem, findNearestBlock, findPlayer, fleeFrom, isAliveEntity, nearestCreeper, nearestThreat, protectedReason, summarizeItems,
 } from './helpers.js';
+import { smeltCore, withChest } from './actions.js';
 import { canEngage, creeperPlan, fight, outnumbered, retreatFromCrowd } from './combat.js';
 import { pickFood } from './survival.js';
 import { freeSeat, isPortalNear, mountEntity, usePortal } from './movement.js';
@@ -147,6 +148,37 @@ export async function accompanyLoop(agent, username, task, { minDist = 2, maxDis
   }
 }
 
+// 打猎（主人同意后）：牛、猪、羊、鸡、兔子，每种附近至少留两只，不打命名的和小的；捡起掉落，有熔炉就烤熟。
+const FOOD_ANIMALS = { cow: 'beef', mooshroom: 'beef', pig: 'porkchop', sheep: 'mutton', chicken: 'chicken', rabbit: 'rabbit' };
+
+export async function hunt(agent, signal, want = 3) {
+  const bot = agent.bot;
+  const babyOf = (e) => {
+    const keys = bot.registry.entitiesByName[e.name]?.metadataKeys ?? [];
+    return e.metadata?.[keys.indexOf('baby')] === true;
+  };
+  let got = 0;
+  for (let i = 0; i < want; i++) {
+    if (signal?.aborted) throw abortError(signal);
+    const counts = {};
+    for (const e of Object.values(bot.entities)) if (FOOD_ANIMALS[e.name] && isAliveEntity(bot, e)) counts[e.name] = (counts[e.name] ?? 0) + 1;
+    const target = Object.values(bot.entities)
+      .filter((e) => FOOD_ANIMALS[e.name] && isAliveEntity(bot, e) && !babyOf(e) && counts[e.name] > 2 && !protectedReason(agent, e)
+        && e.position.distanceTo(bot.entity.position) < 40)
+      .sort((a, b) => a.position.distanceTo(bot.entity.position) - b.position.distanceTo(bot.entity.position))[0];
+    if (!target) break;
+    const where = target.position.clone();
+    if (await fight(agent, target, signal, 25_000)) got += 1;
+    await sleep(600, signal);
+    const drops = Object.values(bot.entities).filter((e) => e.name === 'item' && e.position.distanceTo(where) < 5);
+    if (drops.length) await bot.collectBlock.collect(drops, { ignoreNoPath: true }).catch(() => {});
+  }
+  // 附近有熔炉就把生肉烤熟
+  const raw = bot.inventory.items().find((i) => Object.values(FOOD_ANIMALS).includes(i.name));
+  if (raw && findNearestBlock(bot, ['furnace', 'smoker'], 24)) await smeltCore(agent, raw, raw.count, signal).catch(() => {});
+  return got ? `打了 ${got} 只动物，找到吃的了` : '附近没有能打的动物（每种至少留两只，不打小的和命名的）';
+}
+
 // 陪伴对象：在线的主人（主人名单为空时就是离得最近的玩家）。
 function companionTarget(agent) {
   const bot = agent.bot;
@@ -170,6 +202,50 @@ export function installCompanion(agent, bot) {
   let lastGear = 0;
   let lastAskFood = 0;
   let busy = false;
+
+  // 翻箱子：附近 16 格里没打开过（或者半小时没看过）的箱子，打开看一眼记下来（只看不拿）
+  async function surveyChests(limit = 2) {
+    const ids = ['chest', 'trapped_chest', 'barrel'].map((n) => bot.registry.blocksByName[n]?.id).filter((x) => x != null);
+    const stale = (p) => {
+      const t = agent.chestIndex.seenAt(p);
+      return !t || Date.now() - Date.parse(t) > 30 * 60_000;
+    };
+    const spots = bot.findBlocks({ matching: ids, maxDistance: 16, count: 24 }).filter(stale).slice(0, limit);
+    if (!spots.length) return false;
+    await agent.tasks.run('survey', `翻看附近的 ${spots.length} 个箱子`, async (task) => {
+      for (const p of spots) {
+        try {
+          await withChest(agent, p, task.signal, async () => {});
+        } catch (err) {
+          if (task.signal.aborted) throw err;
+        }
+      }
+      return '记下了附近箱子里有什么';
+    }, { waitMs: 0, by: { source: 'self' } });
+    return true;
+  }
+
+  // 饿了没吃的：先去记得的箱子拿（gearUp）→ 翻附近没看过的箱子 → 问主人能不能去打猎
+  let lastHuntAsk = 0;
+  let lastSurvey = 0;
+  async function seekFood() {
+    if (pickFood(bot) || bot.food > 14) return false;
+    if (cfg.use_chests && Date.now() - lastSurvey > 120_000) {
+      lastSurvey = Date.now();
+      if (await surveyChests(3)) return true;
+    }
+    if (bot.food > 12 || Date.now() - lastHuntAsk < 10 * 60_000) return false;
+    const owner = companionTarget(agent);
+    if (!owner) return false;
+    lastHuntAsk = Date.now();
+    const ok = await agent.social.ask(owner, '我饿了，身上和箱子里都没有吃的……可以去附近打几只动物吗？（回“好”或“不行”）');
+    if (!ok) {
+      if (ok === false) agent.say('好吧，那我忍一忍，主人记得给我点吃的喵');
+      return false;
+    }
+    agent.tasks.run('hunt', '打猎找吃的', (task) => hunt(agent, task.signal), { waitMs: 0, by: { source: 'self', name: owner, owner: true } }).catch(() => {});
+    return true;
+  }
 
   const triedItems = new Map();
   async function pickupNearby() {
@@ -271,6 +347,12 @@ export function installCompanion(agent, bot) {
       if (cfg.use_chests && Date.now() - lastGear > 60_000) {
         lastGear = Date.now();
         if (await gearUp()) return;
+      }
+      if (cfg.auto_eat && await seekFood()) return;
+      // 平时也顺手翻翻附近没看过的箱子（每 5 分钟最多 2 个），缺东西时知道去哪拿
+      if (cfg.use_chests && cfg.survey_chests !== false && Date.now() - lastSurvey > 300_000) {
+        lastSurvey = Date.now();
+        if (await surveyChests(2)) return;
       }
       if (cfg.companion && !cur) {
         const owner = companionTarget(agent);

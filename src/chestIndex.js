@@ -27,6 +27,11 @@ export class ChestIndex {
     this.save();
   }
 
+  // 上次打开这个箱子的时间（没打开过返回 null）
+  seenAt(pos) {
+    return this.chests[key(pos)]?.at ?? null;
+  }
+
   forget(pos) {
     delete this.chests[key(pos)];
     this.save();

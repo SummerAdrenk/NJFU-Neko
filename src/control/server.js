@@ -13,6 +13,7 @@ import { goals } from '../bot/createBot.js';
 import { Vec3 } from '../bot/helpers.js';
 import { buildContext } from '../brain/context.js';
 import { withTimeout } from '../util.js';
+import { STATUS } from '../requests.js';
 
 const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
 const requireFromHere = createRequire(import.meta.url);
@@ -118,6 +119,14 @@ export async function startControlServer(agent, { brain, brainMode }) {
       const value = await withTimeout(fn(agent.bot, agent, goals, Vec3, requireFromHere), 30_000, '执行超过 30 秒');
       const text = typeof value === 'string' ? value : util.inspect(value, { depth: 3, maxArrayLength: 60, breakLength: 120 });
       return { ok: true, text };
+    },
+    'GET /requests': (url) => (url.searchParams.get('all') ? agent.requests.list : agent.requests.open())
+      .map((r) => ({ ...r, statusText: STATUS[r.status] })),
+    'POST /request': async (url, body) => {
+      const r = agent.requests.update(body.id, String(body.status ?? ''), body.note ?? '');
+      agent.events.push('bot', { what: 'feature_request', by: r.player, detail: `#${r.id} ${STATUS[r.status]}${r.note ? `：${r.note}` : ''}` });
+      if (agent.online) agent.say(`需求 #${r.id}「${r.text.slice(0, 30)}」${STATUS[r.status]}${r.note ? `：${r.note}` : ''}`, { to: r.player });
+      return { ok: true, text: `需求 #${r.id} → ${STATUS[r.status]}` };
     },
     'POST /shutdown': async () => {
       setTimeout(() => process.emit('SIGTERM'), 100);

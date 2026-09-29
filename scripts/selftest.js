@@ -133,5 +133,26 @@ const menu = view.menuDialog(fakeAgent, 'Steve');
 check('菜单 按钮', menu.actions.length >= 10 && !JSON.stringify(menu).includes('/trigger'));
 check('菜单 行动按钮填命令', menu.actions.some((a) => a.action.type === 'suggest_command' && a.action.command === '#过来'));
 
+// 6. #设置 与 #需求
+const settings = await import('../src/settings.js');
+const companion = settings.findSetting('陪伴');
+check('设置 找得到', companion?.path === 'behavior.companion');
+check('设置 开关', settings.parseValue(companion, '开') === true && settings.parseValue(companion, '关') === false);
+let badValue = false;
+try {
+  settings.parseValue(settings.findSetting('撤退血量'), '99');
+} catch {
+  badValue = true;
+}
+check('设置 数值范围', badValue);
+check('设置 不开放危险项', !settings.SETTINGS.some((s) => /owners|commands|control|api_key|allow_eval|deny/.test(s.path)));
+const { RequestStore } = await import('../src/requests.js');
+const tmp = path.join(ROOT, 'runtime', 'tmp', `selftest-requests-${process.pid}.json`);
+const store = new RequestStore(tmp);
+const req = store.add('Steve', '学会钓鱼');
+store.update(req.id, 'done', '好了');
+check('需求 记录', store.get(req.id)?.status === 'done' && store.open().length === 0);
+fs.rmSync(tmp, { force: true });
+
 console.log(`${failed ? '✗' : '✓'} 自测：通过 ${passed} 项${failed ? `，失败 ${failed} 项` : ''}`);
 process.exit(failed ? 1 : 0);

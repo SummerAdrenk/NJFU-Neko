@@ -4,6 +4,9 @@ import { runAction } from './actions.js';
 import { playMiniGame } from './emotes.js';
 import { bar, cmd, dot, gap, label, sendPanel, title, value } from './ui.js';
 import { sendChatInventory, showInventoryDialog, showMenuDialog, supportsDialog } from './inventoryView.js';
+import { findSetting, parseValue, resetOverrides, saveOverride, SETTINGS, settingValue } from '../settings.js';
+import { STATUS } from '../requests.js';
+import { loadConfig } from '../config.js';
 
 const ask = (text) => ({ text, color: 'white', suggest: text, hover: '点击填入聊天框，改一改再发送' });
 const topic = (name) => ({ text: `[${name}]`, color: 'gold', suggest: name === '决斗' ? '#帮助 决斗' : `#${name}`, hover: `查看「${name}」的说明` });
@@ -78,6 +81,8 @@ const HELP = {
     [label('找结构：'), ask('猫娘最近的远古城市在哪'), label('（会附 Chunkbase 地图）')],
     [label('记事：'), ask('猫娘记住我家在 100,64,200'), gap, cmd('#记忆', '看我记住的事（主人）')],
     [label('睡觉：天黑有人躺床时我会问要不要一起睡，回「好」就去')],
+    [label('许愿：'), cmd('#需求 学会钓鱼', '想让我学会的新本事、想改的地方（主人）'), gap, cmd('#需求', '看看需求处理得怎么样了')],
+    [label('开关：'), cmd('#设置', '在游戏里直接开关我的各种行为（主人）')],
   ],
 };
 
@@ -219,6 +224,68 @@ export function createQuickCommands(agent) {
     { names: ['喵', 'meow', '喵喵'], run: async (player) => [...await emote('meow')(player), '喵～'] },
     { names: ['坐下', 'sit'], run: async (player) => [...await emote('sit')(player), '好，坐下了～'] },
     { names: ['起来', '站起来', 'stand'], run: emote('stand') },
+    // 功能需求：主人许愿，后台的 Claude Code 按 CLAUDE.md 的约束来做
+    {
+      names: ['需求', '许愿', 'request'],
+      owner: true,
+      run: (player, args) => {
+        const text = args.join(' ').trim();
+        if (!text) {
+          const list = agent.requests.recent(5);
+          if (!list.length) return ['还没有需求。发「#需求 想让我学会的东西」就行，比如：#需求 学会钓鱼'];
+          const color = (st) => ({ done: 'green', rejected: 'red', cancelled: 'gray' }[st] ?? 'yellow');
+          return {
+            panel: [title('功能需求'), ...list.map((r) => [value(`#${r.id} `, 'aqua'), value(r.text.slice(0, 36)), gap,
+              value(`【${STATUS[r.status]}】`, color(r.status)), ...(r.note ? [label(` ${r.note.slice(0, 30)}`)] : [])])],
+          };
+        }
+        const cancel = /^(撤销|取消)\s*#?(\d+)$/.exec(text);
+        if (cancel) {
+          const r = agent.requests.get(cancel[2]);
+          if (!r) return [`没有需求 #${cancel[2]}`];
+          if (!['pending', 'accepted'].includes(r.status)) return [`需求 #${r.id} 已经${STATUS[r.status]}了`];
+          agent.requests.update(r.id, 'cancelled');
+          return [`好，需求 #${r.id} 撤销了`];
+        }
+        const r = agent.requests.add(player.name, text);
+        agent.events.push('bot', { what: 'feature_request', by: player.name, detail: `#${r.id} ${r.text}` });
+        const how = agent.cfg.brain.mode === 'claude-code'
+          ? '我的“大脑”会在后台看看能不能做，做好了告诉你喵'
+          : '这个要在电脑上用 Claude Code 模式处理，先帮你记下来了';
+        return [`收到～需求 #${r.id} 记下来了：${r.text.slice(0, 40)}。${how}`];
+      },
+    },
+    // 游戏里直接改设置（只开放不影响安全的行为开关）
+    {
+      names: ['设置', 'set', 'settings'],
+      owner: true,
+      run: (player, args) => {
+        const show = (s, v) => (s.type === 'bool' ? (v ? '开' : '关') : String(v));
+        if (!args.length) {
+          const lines = [title('设置（点一下填入聊天框，后面写 开 / 关 或数字）')];
+          const cells = SETTINGS.map((s) => {
+            const v = settingValue(agent.cfg, s);
+            return [cmd(`#设置 ${s.key}`, s.desc), label(' '), value(show(s, v), s.type === 'bool' ? (v ? 'green' : 'red') : 'aqua')];
+          });
+          for (let i = 0; i < cells.length; i += 3) lines.push(cells.slice(i, i + 3).flatMap((c, j) => [...c, ...(j < 2 ? [gap] : [])]));
+          lines.push([label('全部恢复成 config.toml 里的样子：'), cmd('#设置 重置')]);
+          return { panel: lines };
+        }
+        if (['重置', 'reset'].includes(args[0])) {
+          const n = resetOverrides(agent.cfg, loadConfig());
+          if (agent.bot) agent.bot.nekoScaffold = agent.cfg.behavior.scaffold !== false;
+          return [n ? `好，恢复了 ${n} 项设置` : '本来就没改过设置'];
+        }
+        const s = findSetting(args[0]);
+        if (!s) return [`没有「${args[0]}」这个设置，发 #设置 看看有哪些`];
+        if (args.length < 2) return [`${s.key}：${show(s, settingValue(agent.cfg, s))}（${s.desc}）`];
+        const v = parseValue(s, args[1]);
+        saveOverride(agent.cfg, s, v);
+        if (s.path === 'behavior.scaffold' && agent.bot) agent.bot.nekoScaffold = v;
+        agent.events.push('bot', { what: 'setting', by: player.name, detail: `${s.key} → ${show(s, v)}` });
+        return [`好，${s.key} 改成 ${show(s, v)} 了喵`];
+      },
+    },
     // 小游戏
     { names: ['猜拳', 'rps'], run: (player, args) => playMiniGame(agent, 'rps', player.name, args) },
     { names: ['抛硬币', '硬币', 'coin'], run: (player) => playMiniGame(agent, 'coin', player.name, []) },

@@ -6,7 +6,7 @@ import { canEngage, creeperPlan, fight, outnumbered, retreatFromCrowd } from './
 
 const log = getLog('生存');
 
-const BAD_FOOD = new Set(['rotten_flesh', 'spider_eye', 'poisonous_potato', 'pufferfish', 'chorus_fruit', 'suspicious_stew']);
+const BAD_FOOD = new Set(['rotten_flesh', 'spider_eye', 'poisonous_potato', 'pufferfish', 'chorus_fruit', 'suspicious_stew', 'chicken']);
 // 金苹果留着打架救命用，平时不吃
 const RESERVED_FOOD = new Set(['golden_apple', 'enchanted_golden_apple']);
 

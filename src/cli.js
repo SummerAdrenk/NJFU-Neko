@@ -23,6 +23,9 @@ const HELP = `NJFU智慧猫娘 · 命令行
   cancel                      停止当前任务
   events [--since 序号] [--all] 查看最近的事件（--all 连动作记录一起显示）
   watch [--all]               持续输出新事件（Claude Code 模式用它接收聊天）
+  requests                    列出还没处理完的 #需求
+  request <编号> <状态> [说明]  更新需求状态并在游戏里告诉提需求的人
+                                状态：accepted 处理中 / done 已完成 / rejected 不做
   eval <JS 代码>              在猫娘进程里执行 JS（可用 bot、agent、goals、Vec3、require）
   reconnect                   立即重新连接服务器
   logs [-n 行数] [-f]         查看日志（-f 持续跟踪新日志）
@@ -101,7 +104,7 @@ function parseActArgs(parts) {
 function important(e) {
   if (e.type === 'chat') return e.addressed;
   if (e.type === 'task') return e.status === 'done' || e.status === 'failed';
-  if (e.type === 'bot') return ['death', 'low_health', 'hungry_no_food', 'op', 'emergency_stop', 'gift', 'attacked', 'player_death', 'retreat', 'affection_level', 'ask_sleep'].includes(e.what);
+  if (e.type === 'bot') return ['death', 'low_health', 'hungry_no_food', 'op', 'emergency_stop', 'gift', 'attacked', 'player_death', 'retreat', 'affection_level', 'ask_sleep', 'feature_request', 'setting'].includes(e.what);
   if (e.type === 'connection') return ['online', 'offline', 'kicked'].includes(e.state);
   return false;
 }
@@ -305,6 +308,18 @@ async function main() {
     case 'reconnect':
       console.log((await call('POST', '/reconnect')).text);
       return;
+    case 'requests': {
+      const list = await call('GET', `/requests${args.includes('--all') ? '?all=1' : ''}`);
+      if (!list.length) console.log('没有待处理的需求');
+      for (const r of list) console.log(`#${r.id} [${r.statusText}] ${r.player}：${r.text}${r.note ? `（${r.note}）` : ''}`);
+      return;
+    }
+    case 'request': {
+      const [id, status, ...note] = args;
+      if (!id || !status) throw new Error('用法：request <编号> <accepted|done|rejected> [说明]');
+      console.log((await call('POST', '/request', { id: Number(id), status, note: note.join(' ') })).text);
+      return;
+    }
     case 'stop':
       console.log((await call('POST', '/shutdown')).text);
       return;
