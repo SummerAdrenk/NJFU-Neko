@@ -138,6 +138,9 @@ const guestMenu = view.menuDialog({ ...fakeAgent, chat: { isOwner: () => false }
 check('菜单 非主人没有主人专用按钮', !JSON.stringify(guestMenu).includes('#过来') && JSON.stringify(guestMenu).includes('#摸头'));
 check('菜单 坐着时换成站起来', JSON.stringify(view.menuDialog({ ...fakeAgent, seated: true }, 'Steve')).includes('#起来'));
 check('菜单 按钮都对应快捷命令', Object.values(view.MENU_ACTIONS).every((a) => a.text.startsWith('#') && a.label && a.tip));
+const duelBtn = modMenu.actions.find((a) => a.label === 'PVP 决斗');
+check('菜单 决斗先选难度', duelBtn?.action.type === 'show_dialog' && duelBtn.action.dialog.actions.length === 3
+  && duelBtn.action.dialog.actions.some((a) => a.action.command === '/njfu ui duel_hard'));
 const armorBot = {
   inventory: { slots: { 5: { name: 'diamond_helmet' }, 6: { name: 'diamond_chestplate' }, 7: { name: 'diamond_leggings' }, 8: { name: 'diamond_boots' } } },
   getEquipmentDestSlot: (d) => ({ head: 5, torso: 6, legs: 7, feet: 8 })[d],

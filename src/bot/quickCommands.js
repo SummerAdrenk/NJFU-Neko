@@ -39,7 +39,7 @@ const HELP = {
   ],
   决斗: [
     title('PVP 决斗'),
-    [cmd('#决斗', '普通难度'), gap, cmd('#决斗 简单'), gap, cmd('#决斗 困难', '我会走位、跳劈、用盾')],
+    [cmd('#决斗', '先选难度'), gap, cmd('#决斗 简单'), gap, cmd('#决斗 普通'), gap, cmd('#决斗 困难', '我会走位、跳劈、用盾')],
     [label('倒计时后开打，默认'), value('切磋', 'yellow'), label('：打到只剩几颗心就停')],
     [cmd('#认输'), gap, cmd('#战绩', '你对我的胜负记录')],
   ],
@@ -337,7 +337,18 @@ export function createQuickCommands(agent) {
     {
       names: ['决斗', 'pk', 'PK', 'duel'],
       run: async (player, args) => {
-        const level = { 简单: 'easy', 普通: 'normal', 困难: 'hard', easy: 'easy', normal: 'normal', hard: 'hard' }[args[0] ?? '普通'] ?? 'normal';
+        // 没说难度：先让玩家选
+        if (!args.length) {
+          return {
+            panel: [
+              title('PVP 决斗：选个难度（点一下，再按回车）'),
+              [cmd('#决斗 简单', '不走位、不跳劈、不举盾，出手慢'), gap, cmd('#决斗 普通', '左右走位、举盾，会用斧子破你的盾'), gap, cmd('#决斗 困难', '走位、跳劈暴击、举盾、斧子破盾')],
+              [label(agent.cfg.duel?.lethal ? '现在是真打：打到有一方倒下。' : '切磋：打到只剩几颗心就停。'), cmd('#认输'), label(' 随时认输，'), cmd('#战绩'), label(' 看胜负')],
+            ],
+          };
+        }
+        const level = { 简单: 'easy', 普通: 'normal', 困难: 'hard', easy: 'easy', normal: 'normal', hard: 'hard' }[args[0]];
+        if (!level) return ['难度只有：简单、普通、困难（比如 #决斗 困难）'];
         const r = await act('duel', { action: 'start', player: player.name, difficulty: level }, player, 500);
         return r.ok ? [] : [r.text];
       },

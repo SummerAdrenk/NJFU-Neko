@@ -195,7 +195,9 @@ export const MENU_ACTIONS = {
   home: { label: '回家', text: '#回家', tip: '回到她的床边', owner: true },
   sit: { label: '坐下', text: '#坐下', tip: '原地坐下，陪在这里' },
   stand: { label: '站起来', text: '#起来', tip: '站起来' },
-  duel: { label: 'PVP 决斗', text: '#决斗', tip: '切磋：倒计时后开打，打到只剩几颗心就停' },
+  duel_easy: { label: '简单', text: '#决斗 简单', tip: '不走位、不跳劈、不举盾，出手慢' },
+  duel_normal: { label: '普通', text: '#决斗 普通', tip: '左右走位、举盾，会用斧子破你的盾；不跳劈' },
+  duel_hard: { label: '困难', text: '#决斗 困难', tip: '走位、跳劈暴击、举盾、斧子破盾' },
   pet: { label: '摸摸头', text: '#摸头', tip: '摸摸她的头，好感 +1' },
   hug: { label: '抱抱', text: '#抱抱', tip: '她会跑过来抱你，好感 +1' },
   dance: { label: '跳支舞', text: '#跳舞', tip: '转圈、蹦跳、冒爱心' },
@@ -203,26 +205,48 @@ export const MENU_ACTIONS = {
 
 const button = (label, action, tooltip, width = 100) => ({ label, ...(tooltip ? { tooltip } : {}), action, width });
 
+// 菜单按钮的动作：装了面板模组 1.0.2+ 用 /njfu ui 转告（点一下就生效）；没装就私聊快捷命令（原版会先弹确认窗口）
+function menuButton(agent, id) {
+  const a = MENU_ACTIONS[id];
+  if (agent.menuButtons) return button(a.label, { type: 'run_command', command: `/njfu ui ${id}` }, a.tip);
+  return button(a.label, { type: 'run_command', command: `/tell ${agent.bot.username} ${a.text}` },
+    `${a.tip}（没装面板模组：点完在确认窗口里选「复制到聊天屏幕」，再按回车）`);
+}
+
+// PVP 决斗：先选难度
+export function duelDialog(agent) {
+  const lethal = Boolean(agent.cfg.duel?.lethal);
+  return {
+    type: 'minecraft:multi_action',
+    title: { text: 'PVP 决斗', color: 'light_purple' },
+    body: [message([
+      key('选个难度，倒计时后开打'), br(),
+      { text: lethal ? '现在是真打：打到有一方倒下（困难还会用岩浆桶）' : '切磋：打到只剩几颗心就停，不会真的打死', color: 'yellow' },
+    ])],
+    actions: ['duel_easy', 'duel_normal', 'duel_hard'].map((id) => menuButton(agent, id)),
+    columns: 3,
+    exit_action: { label: '算了', width: 150 },
+    pause: false,
+  };
+}
+
 // 功能菜单：3 列、每行 3 个按钮，内容少一点，免得窗口太高要滚动（界面缩放大时也放得下）。
 // 装了面板模组 1.0.2+：按钮点一下就生效；没装：会弹原版的确认窗口，选「复制到聊天屏幕」再按回车。
 export function menuDialog(agent, player) {
   const bot = agent.bot;
   const owner = agent.chat.isOwner(player);
   const love = agent.affection.get(player, owner);
-  const direct = Boolean(agent.menuButtons);
-  const act = (id) => {
-    const a = MENU_ACTIONS[id];
-    const how = direct ? '' : '（没装面板模组：点完在确认窗口里选「复制到聊天屏幕」，再按回车）';
-    return button(a.label, direct ? { type: 'run_command', command: `/njfu ui ${id}` } : { type: 'run_command', command: `/tell ${bot.username} ${a.text}` }, `${a.tip}${how}`);
-  };
+  const act = (id) => (id === 'duel'
+    ? button('PVP 决斗', { type: 'show_dialog', dialog: duelDialog(agent) }, '先选难度，倒计时后开打')
+    : menuButton(agent, id));
   const order = ['come', 'follow', 'stop', 'home', agent.seated ? 'stand' : 'sit', 'duel', 'pet', 'hug', 'dance'];
   const actions = [
-    direct
+    agent.menuButtons
       ? button('查看背包', { type: 'run_command', command: '/njfu ui panel' }, '打开她的人物面板，能直接拿放东西（离得远时弹背包窗口）')
       : button('查看背包', { type: 'show_dialog', dialog: inventoryDialog(agent) }, '看看她背包里有什么'),
     button('查看状态', { type: 'show_dialog', dialog: statusDialog(agent, player) }, '生命、装备、位置、正在做什么'),
     act('help'),
-    ...order.filter((id) => owner || !MENU_ACTIONS[id].owner).map(act),
+    ...order.filter((id) => owner || !MENU_ACTIONS[id]?.owner).map(act),
   ];
   const task = agent.tasks.info()?.desc ?? '没事做，陪着大家';
   return {
