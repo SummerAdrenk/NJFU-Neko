@@ -277,6 +277,24 @@ fakeAgentConn.connecting = false;
 await fakeAgentConn.connect();
 check('重连：已经在线或者正在连时不再开第二个连接（多开会把正在用的 ViaProxy 杀掉，自己把自己踢下线）', opened === 1);
 
+const duelModSpec = await import('../src/bot/duel.js');
+const where = duelModSpec.parseWhere('Steve has the following entity data: [1537.12d, 68.0d, -34.39d]',
+  'Steve has the following entity data: "minecraft:the_nether"', 'Steve has the following entity data: 1');
+check('观战：查到玩家的位置、维度、游戏模式', where?.x === 1537.12 && where.y === 68 && where.z === -34.39 && where.dim === 'minecraft:the_nether' && where.mode === 'creative');
+const specCmds = [];
+const specDuels = new Duels({ cfg: {}, bot: { username: 'NJFU_Neko', players: { Steve: {}, Alex: {} } }, identity: { opLevel: 4 }, adminCommand: (c) => specCmds.push(c), say: () => {} });
+specDuels.savePending = () => {};
+specDuels.whereIs = async () => ({ x: 1, y: 64, z: 2, dim: 'minecraft:overworld', mode: 'survival' });
+specDuels.active = { player: 'Steve', arena: { x: 100, y: 200, z: 100 } };
+const specErr = await specDuels.spectate('Steve');
+const specOk = await specDuels.spectate('Alex');
+const specCmdsIn = [...specCmds];
+specCmds.length = 0;
+const backErr = specDuels.unspectate('Alex');
+check('观战：对手自己不能观战；别人切成旁观者、传送到场地上空；#不看了 送回原处、换回原来的模式',
+  specErr && specOk === null && specCmdsIn.includes('gamemode spectator Alex') && specCmdsIn.some((c) => c.startsWith('execute in minecraft:overworld run tp Alex 100.5 218 79.5'))
+  && backErr === null && specCmds.includes('execute in minecraft:overworld run tp Alex 1 64 2') && specCmds.includes('gamemode survival Alex'));
+
 const junk = await import('../src/bot/junk.js');
 const junkBot = {
   inventory: {

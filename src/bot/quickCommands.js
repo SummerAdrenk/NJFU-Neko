@@ -51,7 +51,7 @@ const HELP = {
     [label('决斗场：开打前在原地正上方现搭 100×100 的空中黑曜石平台，四周屏障墙到顶；搭之前确认不会盖住任何方块，打完拆掉、送回原处')],
     [label('改成家上空或者不用：'), cmd('#设置 决斗场', '原地上空 / 家上空 / 不用'), label('；只这一局：'), cmd('#决斗 困难Ⅲ 家上空')],
     [label('装备都是临时的，打完收回；默认给你也穿一套一样的（20 秒内回“不用”就不穿）')],
-    [cmd('#认输'), gap, cmd('#战绩', '你对我的胜负记录')],
+    [cmd('#认输'), gap, cmd('#战绩', '你对我的胜负记录'), gap, cmd('#观战', '别人决斗时以旁观者（灵魂出窍）的形式去看，打完自动回来'), gap, cmd('#不看了')],
   ],
   战斗: [
     title('战斗（她会自己用这些技巧）'),
@@ -376,6 +376,9 @@ export function createQuickCommands(agent) {
       },
     },
     { names: ['认输', '投降', 'surrender'], run: (player) => [agent.duels.surrender(player.name) ? '嘿嘿，那就是我赢啦～' : '我们现在没在决斗呀'] },
+    // 观战：别人在决斗时，切成旁观者（灵魂出窍）去看；打完自动回来
+    { names: ['观战', '看决斗', 'spectate'], run: async (player) => [await agent.duels.spectate(player.name)].filter(Boolean) },
+    { names: ['不看了', '退出观战', '结束观战'], run: (player) => [agent.duels.unspectate(player.name) ?? '好，送你回去啦～'] },
     { names: ['战绩'], run: (player) => [agent.duels.statsText(player.name)] },
   ];
 

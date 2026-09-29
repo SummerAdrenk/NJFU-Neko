@@ -201,6 +201,7 @@ export const MENU_ACTIONS = {
   hug: { label: '抱抱', text: '#抱抱', tip: '她会跑过来抱你，好感 +1' },
   dance: { label: '跳支舞', text: '#跳舞', tip: '转圈、蹦跳、冒爱心' },
   surrender: { label: '认输', text: '#认输', tip: '提前结束决斗，算你输' },
+  spectate: { label: '观战', text: '#观战', tip: '以旁观者（灵魂出窍）的形式看决斗，打完自动回来' },
 };
 
 // 决斗难度的按钮：duel_<难度 id>（面板模组 /njfu ui duel_hard3 → 当成玩家发了 #决斗 困难Ⅲ）

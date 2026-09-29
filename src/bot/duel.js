@@ -4,6 +4,7 @@
 // 没装：她收尾改用空手打，保证不会打死对方；装备发进背包，打完按标记收回；不用爆炸。
 // 决斗场（duelArena.js）：默认在原地正上方现搭一个空中黑曜石平台（也可以设成家正上方，或者不用），两人传送上去打，
 // 打完清场、拆掉，送回原来的位置。结束时不在线的（掉线了）记下来，等他上线再送回去；没拆掉的场地也记着，她路过时再拆。
+// 观战：决斗中别的玩家发 #观战，切成旁观者（灵魂出窍）传送到场地上空看；打完（或者发 #不看了）换回原来的模式、送回原处。
 import fs from 'node:fs';
 import path from 'node:path';
 import { makeMovements } from './createBot.js';
@@ -25,6 +26,16 @@ const STATS_FILE = path.join(RUNTIME, 'duels.json');
 const LOCK_HP = 1;
 const WEAPON_DAMAGE = { netherite_sword: 8, diamond_sword: 7, iron_sword: 6, stone_sword: 5, golden_sword: 4, wooden_sword: 4, netherite_axe: 10, diamond_axe: 9, iron_axe: 9, stone_axe: 9, golden_axe: 7, wooden_axe: 7, mace: 6, trident: 9 };
 const sameArena = (a, b) => Boolean(a && b && a.x === b.x && a.y === b.y && a.z === b.z);
+const MODES = ['survival', 'creative', 'adventure', 'spectator'];
+
+// /data get entity 的回复：位置 [x d, y d, z d]、维度 "minecraft:xxx"、游戏模式 0～3
+export function parseWhere(pos, dim, mode) {
+  const m = /\[(-?[\d.]+)d, (-?[\d.]+)d, (-?[\d.]+)d\]/.exec(pos ?? '');
+  if (!m) return null;
+  const d = /(minecraft:[a-z_]+)/.exec(dim ?? '')?.[1] ?? 'minecraft:overworld';
+  const g = Number(/:\s*(\d)\s*$/.exec(String(mode ?? '').trim())?.[1] ?? 0);
+  return { x: Number(m[1]), y: Number(m[2]), z: Number(m[3]), dim: d, mode: MODES[g] ?? 'survival' };
+}
 const BAR = 'njfu:duel';
 // 临时装备的标记（duelKits.js 的 TEMP）：/clear 用它把临时装备都收掉
 const TEMP_ITEMS = '*[custom_data~{neko_temp:1b}]';
@@ -150,7 +161,7 @@ export class Duels {
     const a = this.active;
     const data = a ? {
       player: a.player, bot: this.agent.bot?.username, locked: Boolean(a.locked), stashed: a.stashed ?? [], placed: [...(a.placed ?? []), ...(a.fluids ?? [])],
-      arena: a.arena ?? null, returnTo: a.returnTo ?? null, at: Date.now(),
+      arena: a.arena ?? null, returnTo: a.returnTo ?? null, spectators: a.spectators ?? {}, at: Date.now(),
     } : {};
     data.returns = this.returns;
     data.stale = this.staleArenas;
@@ -213,11 +224,75 @@ export class Duels {
     const bot = this.agent.bot;
     if (!pos) return;
     if (who !== bot.username && !bot.players?.[who]) {
-      this.returns[who] = { x: pos.x, y: pos.y, z: pos.z, dim: pos.dim, arena, at: Date.now() };
+      this.returns[who] = { x: pos.x, y: pos.y, z: pos.z, dim: pos.dim, arena, at: Date.now(), ...(pos.mode ? { mode: pos.mode } : {}) };
       return;
     }
     delete this.returns[who];
     this.agent.adminCommand(`execute in ${pos.dim ?? 'minecraft:overworld'} run tp ${who} ${pos.x} ${pos.y} ${pos.z}`);
+    if (pos.mode) this.agent.adminCommand(`gamemode ${pos.mode} ${who}`);
+  }
+
+  // ── 观战 ──
+  // 查一个玩家现在的位置、维度、游戏模式（离得再远也查得到；结果只发给她自己，不在聊天栏广播）
+  async whereIs(name) {
+    const agent = this.agent;
+    const bot = agent.bot;
+    const ask = async (what) => (await agent.chat.capture(async () => bot.chat(`/data get entity ${name} ${what}`), 1200).catch(() => [])).join(' ');
+    return parseWhere(await ask('Pos'), await ask('Dimension'), await ask('playerGameType'));
+  }
+
+  // 看的地方：决斗场南边上空，朝场地斜着往下看；没用决斗场就在她附近的上空
+  viewSpot() {
+    const a = this.active;
+    if (a?.arena) return { x: a.arena.x + 0.5, y: a.arena.y + 18, z: a.arena.z - 20.5, yaw: 0, pitch: 40, dim: 'minecraft:overworld' };
+    const bot = this.agent.bot;
+    const p = bot.entity.position;
+    return { x: p.x, y: p.y + 10, z: p.z - 10, yaw: 0, pitch: 40, dim: `minecraft:${String(bot.game?.dimension ?? 'overworld').replace(/^minecraft:/, '')}` };
+  }
+
+  // 返回要对他说的话（出错或者提示），开始观战成功返回 null
+  async spectate(name) {
+    const agent = this.agent;
+    const a = this.active;
+    if (!a) return '现在没有在决斗哦';
+    if (name === a.player) return '你正在和我决斗呢，打完再看喵';
+    if (agent.identity.opLevel < 2) return '我没有管理员权限，没法让你观战';
+    a.spectators ??= {};
+    if (a.spectators[name]) return '你已经在观战啦（发 #不看了 就回去）';
+    const where = await this.whereIs(name);
+    if (!where) return '没查到你现在在哪，这次先不观战了';
+    if (where.mode === 'spectator') where.mode = 'survival';
+    a.spectators[name] = where;
+    this.savePending();
+    const v = this.viewSpot();
+    agent.adminCommand(`gamemode spectator ${name}`);
+    agent.adminCommand(`execute in ${v.dim} run tp ${name} ${v.x} ${v.y} ${v.z} ${v.yaw} ${v.pitch}`);
+    agent.say(`${name} 灵魂出窍来观战啦～（打完自动回去，发 #不看了 提前回去）`);
+    return null;
+  }
+
+  unspectate(name) {
+    const pos = this.active?.spectators?.[name];
+    if (!pos) return '你没在观战哦';
+    delete this.active.spectators[name];
+    this.sendBack(name, pos);
+    this.savePending();
+    return null;
+  }
+
+  // 开打时告诉在场的其他玩家可以来观战（聊天栏里一个按钮）
+  inviteSpectators(opponent) {
+    const agent = this.agent;
+    const bot = agent.bot;
+    for (const name of Object.keys(bot.players ?? {})) {
+      if (name === opponent || name === bot.username) continue;
+      sendPanel(agent, name, [[
+        { text: `${opponent} 和猫娘开始决斗了！`, color: 'gold' },
+        agent.menuButtons
+          ? { text: '[观战]', color: 'aqua', bold: true, run: '/njfu ui spectate', hover: '以旁观者（灵魂出窍）的形式去看，打完自动送你回来' }
+          : { text: '[观战]', color: 'aqua', bold: true, suggest: '#观战', hover: '点一下填进聊天框，再按回车' },
+      ]]);
+    }
   }
 
   // 模组的决斗锁（锁 1 滴血、决斗中不开她的背包、附近爆炸不破坏方块）。/njfu duel on|off 一次只认一个名字：
@@ -289,6 +364,7 @@ export class Duels {
       await agent.chat.capture(async () => bot.chat(`/njfu stash restore ${who}`), 1200).catch(() => {});
     }
     if (bot.players?.[p.player]) this.sweepTemp(p.player);
+    for (const [who, pos] of Object.entries(p.spectators ?? {})) this.sendBack(who, pos);
     if (p.arena) {
       await this.closeArena(p.arena, p.returnTo, { onlyInside: true });
     } else {
@@ -393,6 +469,7 @@ export class Duels {
         if (worn.them) await this.takeOffKit(username, worn.them).catch(() => {});
         if (worn.me) await this.takeOffKit(bot.username, worn.me).catch(() => {});
         const a = this.active;
+        for (const [who, pos] of Object.entries(a?.spectators ?? {})) this.sendBack(who, pos);
         if (a?.arena) await this.closeArena(a.arena, a.returnTo).catch((err) => log.warn(`拆决斗场出错：${err.message}`));
         else this.clearArena();
         if (bot.players?.[username]) this.sweepTemp(username);
@@ -504,6 +581,8 @@ export class Duels {
         : { text: '[认输]', color: 'red', bold: true, suggest: '#认输', hover: '点一下填进聊天框，再按回车' },
       { text: `（这局最长 ${minutes} 分钟，屏幕上方有倒计时）`, color: 'gray' },
     ]]);
+
+    this.inviteSpectators(username);
 
     const started = Date.now();
     const limitMs = minutes * 60_000;
