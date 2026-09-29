@@ -19,8 +19,9 @@ const ARMOR = { helmet: 'head', chestplate: 'torso', leggings: 'legs', boots: 'f
 const GEAR = /^([a-z]+)_(sword|axe|pickaxe|shovel|hoe|helmet|chestplate|leggings|boots)$/;
 
 const tierOf = (material, kind) => (ARMOR[kind] ? ARMOR_TIER : TOOL_TIER).indexOf(material);
+// 附魔的、起了名字的、决斗/作弊模式的临时装备（打完会收回，不能扔出去被人捡走）都不扔
 const special = (item) => Boolean(item.enchants?.length || item.componentMap?.has?.('enchantments')
-  || item.componentMap?.has?.('custom_name') || item.customName);
+  || item.componentMap?.has?.('custom_name') || item.customName || JSON.stringify(item.components ?? []).includes('neko_temp'));
 
 // 要扔的东西：[{ item, count }]。gifts：最近别人送的物品名（不扔）
 export function junkPlan(bot, { gifts = new Set() } = {}) {

@@ -26,6 +26,8 @@ const LOCK_HP = 1;
 const WEAPON_DAMAGE = { netherite_sword: 8, diamond_sword: 7, iron_sword: 6, stone_sword: 5, golden_sword: 4, wooden_sword: 4, netherite_axe: 10, diamond_axe: 9, iron_axe: 9, stone_axe: 9, golden_axe: 7, wooden_axe: 7, mace: 6, trident: 9 };
 const sameArena = (a, b) => Boolean(a && b && a.x === b.x && a.y === b.y && a.z === b.z);
 const BAR = 'njfu:duel';
+// 临时装备的标记（duelKits.js 的 TEMP）：/clear 用它把临时装备都收掉
+const TEMP_ITEMS = '*[custom_data~{neko_temp:1b}]';
 
 // 一局最长几分钟：作弊档 30、其他 15（config.toml 的 [duel] 里改）
 export function duelMinutes(level, cfg = {}) {
@@ -218,6 +220,13 @@ export class Duels {
     this.agent.adminCommand(`execute in ${pos.dim ?? 'minecraft:overworld'} run tp ${who} ${pos.x} ${pos.y} ${pos.z}`);
   }
 
+  // 收掉玩家身上所有的临时装备：背包、盔甲、副手，还有 2×2 合成格里放着的、鼠标上拿着的（原版 /clear 都管，
+  // 模组放回背包时只管背包格子）。只对玩家用：她自己作弊战斗模式的临时装备是有意留着的
+  sweepTemp(target) {
+    if (target === this.agent.bot.username) return;
+    this.agent.adminCommand(`clear ${target} ${TEMP_ITEMS}`);
+  }
+
   keepStale(arena, save = true) {
     if (!arena || this.staleArenas.some((s) => sameArena(s, arena))) return;
     this.staleArenas.push({ x: arena.x, y: arena.y, z: arena.z, kind: arena.kind });
@@ -273,6 +282,7 @@ export class Duels {
     for (const who of p.stashed ?? []) {
       await agent.chat.capture(async () => bot.chat(`/njfu stash restore ${who}`), 1200).catch(() => {});
     }
+    if (bot.players?.[p.player]) this.sweepTemp(p.player);
     if (p.arena) {
       await this.closeArena(p.arena, p.returnTo, { onlyInside: true });
     } else {
@@ -379,6 +389,7 @@ export class Duels {
         const a = this.active;
         if (a?.arena) await this.closeArena(a.arena, a.returnTo).catch((err) => log.warn(`拆决斗场出错：${err.message}`));
         else this.clearArena();
+        if (bot.players?.[username]) this.sweepTemp(username);
         if (this.active?.locked) agent.adminCommand(`njfu duel off ${username} ${bot.username}`);
         // 没装模组时她可能真的被打倒：算对方赢
         if (this.active?.died && !this.active.recorded) {
@@ -400,6 +411,7 @@ export class Duels {
     const agent = this.agent;
     const bot = agent.bot;
     if (stash) {
+      this.sweepTemp(target);
       const replies = await agent.chat.capture(async () => bot.chat(`/njfu stash save ${target}`), 1500);
       const r = replies.map((t) => /\[NJFU-STASH\] (\S+) (\S+)/.exec(t)).find((m) => m && m[2] === target);
       if (r?.[1] !== 'saved') {
@@ -428,6 +440,7 @@ export class Duels {
     const bot = agent.bot;
     if (mode === 'stash') {
       await agent.chat.capture(async () => bot.chat(`/njfu stash restore ${target}`), 1500);
+      this.sweepTemp(target);
     } else {
       agent.adminCommand(`clear ${target} *[custom_data~{neko_temp:1b}]`);
       await sleep(600);

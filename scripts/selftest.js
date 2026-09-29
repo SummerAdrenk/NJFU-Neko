@@ -270,6 +270,14 @@ const junkBot = {
 const junkNames = junk.junkPlan(junkBot).map((p) => `${p.item.name}:${p.count}`).sort().join(',');
 check('扔垃圾 该扔的', junkNames === 'diorite:30,leather_helmet:1,rotten_flesh:5,wheat_seeds:24,wooden_pickaxe:1');
 check('扔垃圾 不扔礼物', !junk.junkPlan(junkBot, { gifts: new Set(['leather_helmet']) }).some((p) => p.item.name === 'leather_helmet'));
+const tempHelmet = { name: 'leather_helmet', count: 1, components: [{ type: 'custom_data', data: { type: 'compound', value: { neko_temp: { type: 'byte', value: 1 } } } }] };
+const junkBot2 = { ...junkBot, inventory: { ...junkBot.inventory, items: () => [tempHelmet, { name: 'diamond', count: 3 }] } };
+check('扔垃圾 不扔决斗的临时装备（扔出去会被人捡走）', !junk.junkPlan(junkBot2).some((p) => p.item === tempHelmet));
+const sweepCmds = [];
+const sweeper = new Duels({ cfg: {}, bot: { username: 'NJFU_Neko' }, adminCommand: (c) => sweepCmds.push(c) });
+sweeper.sweepTemp('Steve');
+sweeper.sweepTemp('NJFU_Neko');
+check('决斗 收掉玩家身上漏网的临时装备（不动她自己的）', sweepCmds.length === 1 && sweepCmds[0] === 'clear Steve *[custom_data~{neko_temp:1b}]');
 
 const createBotMod = await import('../src/bot/createBot.js');
 check('鞘翅 展开的动作名（新版本 start_fall_flying，不能用 mineflayer 的旧名字）', createBotMod.fallFlyingAction(registry) === 'start_fall_flying');
