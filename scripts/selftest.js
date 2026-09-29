@@ -296,6 +296,23 @@ const { bedError } = await import('../src/bot/actions.js');
 check('睡觉 mineflayer 的英文报错翻成中文（被打退够不着床时会走回去再试）',
   bedError(new Error('cant click the bed')) === '离床太远了，够不着' && bedError(new Error("there's only half bed")) === '床只剩半张');
 
+const tactics = await import('../src/bot/duelTactics.js');
+const nether = tactics.kitArmor(kits.duelLevel('cheat6'));
+const crystalAt = (d) => tactics.blastDamage(6, d, nether);
+check('爆炸伤害（原版公式，下界合金保护 IV）：贴着水晶 3 格用手打自己挨十几点，8 格外只挨两三点，他在水晶旁边挨二十来点',
+  nether.armor === 20 && nether.toughness === 12 && nether.epf === 16
+  && crystalAt(3) > 10 && crystalAt(3) < 16 && crystalAt(8) < 3 && crystalAt(1.2) > 18 && tactics.blastDamage(4, 8, nether) === 0);
+const fakeTacticsBot = (blocked) => ({
+  entity: { position: new Vec3(0.5, 201, 0.5) }, health: 20, entities: {},
+  world: { raycast: () => (blocked ? { name: 'obsidian' } : null) },
+});
+const tFar = new tactics.DuelTactics({ bot: fakeTacticsBot(false), events: { push() {} } }, {}, kits.duelLevel('cheat6'));
+const him = { position: new Vec3(11.5, 201, 0.5) };
+check('水晶：他在旁边、我在 10 格外才射；他在旁边但我也只隔 2 格就不射',
+  tFar.worth({ position: new Vec3(10.5, 201, 0.5) }, him) && !tFar.worth({ position: new Vec3(2.5, 201, 0.5) }, { position: new Vec3(3.5, 201, 0.5) }));
+const tWall = new tactics.DuelTactics({ bot: fakeTacticsBot(true), events: { push() {} } }, {}, kits.duelLevel('cheat6'));
+check('水晶：我和水晶之间垒了方块（射线都被挡住）就算安全', tWall.shielded(new Vec3(2.5, 201, 0.5)) && !tFar.shielded(new Vec3(2.5, 201, 0.5)));
+
 const duelMod = await import('../src/bot/duel.js');
 check('决斗时长：默认 15 分钟，作弊档 30 分钟',
   duelMod.duelMinutes(kits.duelLevel('easy'), {}) === 15 && duelMod.duelMinutes(kits.duelLevel('hard6'), {}) === 15

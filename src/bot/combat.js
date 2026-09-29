@@ -330,7 +330,7 @@ export async function retreatFromCrowd(agent, signal, ms = 9000) {
 }
 
 // 扔末影珍珠逃到 dir 方向 12～20 格外的一块安全地面上。成功传送返回 true。
-export async function pearlAway(agent, pearl, dir, signal) {
+export async function pearlAway(agent, pearl, dir, signal, what = '扔末影珍珠逃出了怪群') {
   const bot = agent.bot;
   const me = bot.entity.position;
   for (const dist of [18, 15, 12]) {
@@ -353,7 +353,7 @@ export async function pearlAway(agent, pearl, dir, signal) {
       while (Date.now() < until && bot.entity.position.distanceTo(start) < 6) await sleep(100, signal);
       await equipBestWeapon(bot);
       if (bot.entity.position.distanceTo(start) >= 6) {
-        agent.events.push('bot', { what: 'combat', detail: '扔末影珍珠逃出了怪群' });
+        agent.events.push('bot', { what: 'combat', detail: what });
         return true;
       }
       return false;
