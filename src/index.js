@@ -10,6 +10,7 @@ import { EVENTS_FILE, LOG_DIR, ROOT } from './paths.js';
 import { Agent } from './agent.js';
 import { startControlServer } from './control/server.js';
 import { ApiBrain } from './brain/apiBrain.js';
+import { OpenAiBrain } from './brain/openaiBrain.js';
 import { ClaudeCodeBrain, NoBrain } from './brain/claudeCodeBrain.js';
 
 const log = getLog('启动');
@@ -26,12 +27,20 @@ function createBrain(agent) {
       log.error('请在 config.toml 的 [brain.api] 填写 api_key，或设置环境变量 ANTHROPIC_API_KEY；现在先以“只挂机”模式运行');
     }
   }
+  if (mode === 'openai') {
+    try {
+      return new OpenAiBrain(agent);
+    } catch (err) {
+      log.error(`OpenAI 兼容接口大脑启动失败：${err.message}`);
+      log.error('请检查 config.toml 的 [brain.openai]（服务商、地址、模型、Key）；现在先以“只挂机”模式运行');
+    }
+  }
   return new NoBrain();
 }
 
 // 防泄漏检查：config.toml 里写了 API Key，却被 git 跟踪（可能会被提交上传）。
 function checkSecretsNotTracked(cfg) {
-  if (!String(cfg.brain.api.api_key ?? '').trim()) return;
+  if (!String(cfg.brain.api?.api_key ?? '').trim() && !String(cfg.brain.openai?.api_key ?? '').trim()) return;
   const r = spawnSync('git', ['ls-files', '--error-unmatch', path.relative(ROOT, cfg.file)], { cwd: ROOT, encoding: 'utf8', windowsHide: true });
   if (r.status === 0) {
     log.warn('⚠ config.toml 里有 API Key，而且它被 git 跟踪了，提交时会把 Key 一起上传！请执行：git rm --cached config.toml');

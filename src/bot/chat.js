@@ -10,6 +10,13 @@ const STOP_WORDS = new Set(['停', '停下', '停止', '停一下', '别动', '�
 // 有些服务器把玩家聊天当系统消息发来，这里只认最标准的原版格式。
 const SYSTEM_CHAT = /^<([A-Za-z0-9_]{1,16})> (.+)$/;
 
+// 面板模组的通知：[NJFU-UI] panel|menu <玩家>，或者 [NJFU-UI] do <玩家> <按钮>
+export function parseUiNotice(text) {
+  const m = /^\[NJFU-UI\] (?:(panel|menu) ([A-Za-z0-9_]{1,16})|do ([A-Za-z0-9_]{1,16}) ([A-Za-z0-9_.+-]{1,32}))$/.exec(text);
+  if (!m) return null;
+  return m[1] ? { action: m[1], player: m[2] } : { action: 'do', player: m[3], what: m[4] };
+}
+
 export class ChatHub {
   constructor(agent) {
     this.agent = agent;
@@ -60,10 +67,10 @@ export class ChatHub {
   onSystem(bot, raw) {
     const text = raw.trim();
     if (!text) return;
-    // 面板模组发给猫娘的通知：有人右键了她（panel）或 Shift+右键（menu）
-    const ui = /^\[NJFU-UI\] (panel|menu) ([A-Za-z0-9_]{1,16})$/.exec(text);
+    // 面板模组发给猫娘的通知：有人右键了她（panel）、Shift+右键（menu）、点了功能菜单的按钮（do）
+    const ui = parseUiNotice(text);
     if (ui) {
-      this.agent.emit('panel', { action: ui[1], player: ui[2] });
+      this.agent.emit('panel', ui);
       return;
     }
     for (const tap of this.taps) tap(text);
@@ -130,6 +137,13 @@ export class ChatHub {
       return;
     }
     agent.emit('addressed', msg);
+  }
+
+  // 功能菜单的按钮（面板模组转告的）：当成这个玩家发了对应的快捷命令
+  runQuick(from, text) {
+    const msg = { from, text, kind: 'menu', addressed: true, owner: this.isOwner(from), t: Date.now() };
+    this.quick ??= createQuickCommands(this.agent);
+    return this.quick(msg).catch((err) => log.warn('快捷命令出错：', err.message));
   }
 
   // 记录猫娘自己说的话，供大脑回顾对话。

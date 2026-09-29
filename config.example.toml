@@ -81,8 +81,8 @@ self_defense = true
 assist_owner = true
 # 主人被怪物攻击时去保护
 protect_owner = true
-# 血量低于这个值时撤退（0 表示不撤退）
-retreat_health = 8
+# 血量到这个值时撤退（0 表示不撤退）。默认 2 = 1 颗心；普通模式会多 2，极限/作弊模式少 1
+retreat_health = 2
 # 不攻击挂了命名牌的生物（防止误伤刷怪塔、农场等机器里的生物）
 never_attack_named = true
 # 禁战区：这些长方体区域里的生物不打，每项写 [x1, y1, z1, x2, y2, z2]
@@ -134,14 +134,14 @@ client_jar = ""
 
 [combat]
 # 战斗模式（游戏里发 #战斗模式 也能切换）：
-#   "普通"  会用盾牌、弓箭、药水和金苹果救急
-#   "困难"  再加上跳劈、横扫、边打边退、船困怪、水桶冲开怪群、垫高躲怪、按引信打苦力怕
-#   "极限"  所有技巧都用：再加岩浆桶烫怪、鞘翅撤离、附魔金苹果，索敌范围更大
+#   "普通"  会用盾牌、弓箭、药水和金苹果救急；剩 2 颗心就撤
+#   "困难"  再加上岩浆桶先烫再打、跳劈、横扫、边打边退、船困怪、水桶冲开怪群、垫高躲怪、按引信打苦力怕；剩 1 颗心才撤
+#   "极限"  所有技巧都用：再加鞘翅撤离、附魔金苹果；剩半颗心才撤
 #   "作弊"  极限 + 临时发一套顶级附魔装备（需要管理员权限），切回别的模式时收回
 mode = "困难"
 # 日常索敌范围（格）：多远的敌对生物会主动去打（和战斗模式无关）。墙后、地底下看不见的只处理 6 格内的；
-# 走不过去的追一阵没进展就先不管。
-engage_radius = 64
+# 走不过去的追一阵没进展就先不管。末影龙、凋灵这种在天上绕大圈的 Boss 和恶魂（有弓才打）不受这个限制。
+engage_radius = 32
 # 作弊模式发哪套装备："下界合金" 或 "钻石"；再发几个附魔金苹果、几个不死图腾、要不要药水和鞘翅
 cheat_tier = "下界合金"
 cheat_gapples = 4
@@ -172,7 +172,8 @@ sweep = true
 kite = true
 # 用水桶在自己和怪群之间倒水把怪冲开（打完收回）
 water = true
-# 岩浆桶烫怪（只在极限/作弊模式用；周围有木头、羊毛等会烧的东西或主人在旁边时不倒；打完收回）
+# 岩浆桶烫怪（困难以上）：能烫先烫——开打前把够得着的怪都点一下（放下马上用空桶收回），群怪就一只只烫过去，再砍。
+# 紧挨着有木头、羊毛等会烧的东西或水、主人在旁边、下雨天露天时不倒；不怕火的、末影人（会瞬移）、女巫（会喝抗火）不烫
 lava = true
 # 被怪群围住、血很少时用鞘翅飞走（只在极限/作弊模式用，要有烟花）
 elytra = true
@@ -216,7 +217,8 @@ chunkbase_platform = ""
 
 [brain]
 # 谁来当猫娘的“大脑”：
-#   "api"         独立运行，直接调用 Claude API（需要下面的认证，按用量计费）
+#   "api"         独立运行，直接调用 Claude API（需要下面 [brain.api] 的认证，按用量计费）
+#   "openai"      独立运行，调用 OpenAI 兼容接口：GPT、DeepSeek，或者通义千问、Kimi、本地 Ollama 等（见 [brain.openai]）
 #   "claude-code" 由 Claude Code 会话来思考和操作（可以用 Claude 官网订阅账号，见 CLAUDE.md）
 #   "none"        只挂机，不思考不回话（快捷命令、自动行为照常工作）
 mode = "api"
@@ -243,6 +245,36 @@ strict_tools = true
 # 允许大脑上网查资料（只能访问下面的网站）；会产生额外的搜索费用
 web_search = true
 web_domains = ["zh.minecraft.wiki", "minecraft.wiki", "www.mcmod.cn", "mcmod.cn"]
+# 给大脑看最近多少条聊天
+recent_chat_lines = 20
+# 每小时最多思考多少次（防止刷屏和意外花费）
+max_episodes_per_hour = 120
+# 后台任务完成后，最多连续自动续做几步（有人说话会重新计数）
+max_auto_steps = 8
+
+[brain.openai]
+# mode = "openai" 时用。服务商：
+#   "openai"    GPT（默认模型 gpt-5，Key 放环境变量 OPENAI_API_KEY）
+#   "deepseek"  DeepSeek（默认模型 deepseek-chat，Key 放环境变量 DEEPSEEK_API_KEY）
+#   "custom"    其他兼容 Chat Completions 和函数调用（tools）的服务：通义千问、Kimi、智谱、本地 Ollama / LM Studio……
+#               要自己填 base_url 和 model（本机地址可以不要 Key）
+provider = "openai"
+# 模型名，留空用服务商的默认。模型必须支持函数调用（tools），DeepSeek 用 deepseek-chat
+model = ""
+# 接口地址，留空用服务商的默认（openai：https://api.openai.com/v1，deepseek：https://api.deepseek.com）
+# 例：通义千问 "https://dashscope.aliyuncs.com/compatible-mode/v1"，Kimi "https://api.moonshot.cn/v1"，Ollama "http://localhost:11434/v1"
+base_url = ""
+# 认证：留空时读环境变量（更安全，分享配置文件也不会泄露）；也可以直接填 Key
+api_key = ""
+# 放 Key 的环境变量名，留空按服务商：openai / custom 用 OPENAI_API_KEY，deepseek 用 DEEPSEEK_API_KEY
+api_key_env = ""
+# 思考力度（只有 OpenAI 的推理模型认，比如 gpt-5）："minimal"/"low" 反应快、"medium"/"high" 更聪明更慢；留空不设置
+effort = "low"
+max_tokens = 8000
+# 一次请求最多等多少秒
+timeout_seconds = 120
+# 一次对话里最多连续调用多少轮工具
+max_tool_rounds = 12
 # 给大脑看最近多少条聊天
 recent_chat_lines = 20
 # 每小时最多思考多少次（防止刷屏和意外花费）

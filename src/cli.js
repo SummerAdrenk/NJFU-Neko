@@ -6,7 +6,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { formatEvent } from './format.js';
 import { addSecret, redact } from './secrets.js';
-import { LOG_DIR, ROOT, RUNTIME } from './paths.js';
+import { LOG_DIR, ROOT, RUNTIME, WATCH_CURSOR_FILE } from './paths.js';
 
 const HELP = `NJFU智慧猫娘 · 命令行
 
@@ -109,28 +109,56 @@ function important(e) {
   return false;
 }
 
+// 断点续传：记住看到了哪一条。watch 断开再启动（比如 Claude Code 的监听到期后重挂）时，
+// 先补上中间漏掉的事件（最多补 30 分钟内的），再接着往下看，一条都不漏。
+function readCursor() {
+  try {
+    return JSON.parse(fs.readFileSync(WATCH_CURSOR_FILE, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function saveCursor(boot, seq) {
+  try {
+    fs.writeFileSync(WATCH_CURSOR_FILE, `${JSON.stringify({ boot, seq, at: new Date().toISOString() })}\n`);
+  } catch {
+    // 记不下来也不影响看
+  }
+}
+
 async function watch(all) {
   let boot = null;
   let since = 0;
   let down = false;
+  const cursor = readCursor();
   for (;;) {
     try {
-      const data = await call('GET', `/events?since=${since}&wait=25000`, null, { timeoutMs: 40_000 });
+      const data = await call('GET', `/events?since=${since}&wait=${boot === null ? 0 : 25000}`, null, { timeoutMs: 40_000 });
       if (down) {
         console.log('[watch] 已重新连上猫娘进程');
         down = false;
       }
       if (data.boot !== boot) {
-        // 第一次连接时不回放旧事件；进程重启后从头读新进程的事件。
         const first = boot === null;
         boot = data.boot;
-        since = first ? data.seq : 0;
-        if (first) continue;
+        if (first) {
+          // 同一个猫娘进程：从上次看到的那条接着补；进程换过了：补新进程 30 分钟内的
+          const from = cursor?.boot === data.boot ? Number(cursor.seq) || 0 : 0;
+          const missed = data.events.filter((e) => e.seq > from && Date.now() - Date.parse(e.t) < 30 * 60_000 && (all || important(e)));
+          if (missed.length) console.log(`[watch] 补上没看到的 ${missed.length} 条：`);
+          for (const e of missed) console.log(formatEvent(e));
+          since = data.seq;
+          saveCursor(boot, since);
+          continue;
+        }
+        since = 0; // 进程重启了：从头读新进程的事件
       }
       for (const e of data.events) {
         since = Math.max(since, e.seq);
         if (all || important(e)) console.log(formatEvent(e));
       }
+      if (data.events.length) saveCursor(boot, since);
     } catch (err) {
       if (!down) {
         console.log(`[watch] ${err.message}；每 3 秒重试`);

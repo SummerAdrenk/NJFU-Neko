@@ -7,6 +7,8 @@ import { sleep } from '../util.js';
 
 const log = getLog('互动');
 const FETCH_ITEMS = new Set(['stick', 'bone']);
+// 坐着也能做的动作（其他动作先站起来）
+const SEATED_OK = new Set(['stand', 'hearts', 'meow', 'happy', 'nod', 'shake', 'wave']);
 
 // 需要管理员权限的特效（粒子、声音）。只在装了面板模组（能静默执行命令）时播放，
 // 否则每个特效都会在管理员的聊天栏里多一条灰色提示。坐下/站起这类必须的动作照常执行。
@@ -94,7 +96,14 @@ export function createEmotes(agent) {
     },
     hearts: { name: '冒爱心', run: async () => { await hearts(8); } },
     meow: { name: '喵喵叫', run: async () => { await meow('ambient'); } },
-    happy: { name: '开心', run: async () => { hearts(6); meow('purreow'); await library.jump.run(); } },
+    happy: {
+      name: '开心',
+      run: async () => {
+        hearts(6);
+        meow('purreow');
+        if (!agent.seated) await library.jump.run(); // 坐着就不跳了，冒爱心、呼噜就好
+      },
+    },
     sad: {
       name: '难过',
       run: async () => {
@@ -104,18 +113,24 @@ export function createEmotes(agent) {
         await control('sneak', 1500);
       },
     },
-    // 原版玩家没有坐下动作：召唤一个隐形盔甲架，用 /ride 让猫娘骑上去，看起来就是坐着的。
+    // 原版玩家没有坐下动作：召唤一个隐形的标记盔甲架，用 /ride 让猫娘骑上去，看起来就是坐着的。
+    // 标记盔甲架没有高度，骑上去后脚比它低 0.6 格、正好坐在地上，所以盔甲架就放在她脚下的地面上。
     sit: {
       name: '坐下',
       run: async () => {
         if (agent.identity.opLevel < 2) throw new Error('坐下需要管理员权限');
         const b = bot();
+        if (agent.seated && b.vehicle) return;
+        b.pathfinder?.setGoal(null);
+        b.clearControlStates?.();
         const p = b.entity.position;
         await effects(agent, [
-          `/summon minecraft:armor_stand ${p.x.toFixed(2)} ${(p.y - 1.6).toFixed(2)} ${p.z.toFixed(2)} {Invisible:1b,Marker:1b,NoGravity:1b,Invulnerable:1b,Silent:1b,Tags:["neko_seat"]}`,
+          '/kill @e[type=minecraft:armor_stand,tag=neko_seat]',
+          `/summon minecraft:armor_stand ${p.x.toFixed(2)} ${p.y.toFixed(2)} ${p.z.toFixed(2)} {Invisible:1b,Marker:1b,NoGravity:1b,Invulnerable:1b,Silent:1b,Tags:["neko_seat"]}`,
           `/ride ${b.username} mount @e[type=minecraft:armor_stand,tag=neko_seat,limit=1,sort=nearest]`,
         ], { required: true });
         agent.seated = true;
+        agent.seatedAt = Date.now();
       },
     },
     stand: {
@@ -130,7 +145,7 @@ export function createEmotes(agent) {
   async function perform(name, target) {
     const emote = library[name];
     if (!emote) throw new Error(`没有「${name}」这个动作。可用：${Object.entries(library).map(([k, v]) => `${k}（${v.name}）`).join('、')}`);
-    if (agent.seated && name !== 'stand' && name !== 'hearts' && name !== 'meow') await library.stand.run();
+    if (agent.seated && !SEATED_OK.has(name)) await library.stand.run();
     if (target) await lookAtPlayer(target);
     await emote.run();
     return `做了动作：${emote.name}`;
@@ -228,7 +243,8 @@ export function installInteractions(agent, bot) {
     }
     if (tod != null) lastTimeCheck = tod;
     const cur = agent.tasks.current;
-    if (cfg.idle_emotes && (!cur || cur.name === 'companion') && !bot.pathfinder.isMoving() && Date.now() - lastIdleEmote > 45_000 && Math.random() < 0.15) {
+    // 坐着时不做（蹲一下就会从座位上下来）
+    if (cfg.idle_emotes && !agent.seated && (!cur || cur.name === 'companion') && !bot.pathfinder.isMoving() && Date.now() - lastIdleEmote > 45_000 && Math.random() < 0.15) {
       lastIdleEmote = Date.now();
       const pick = ['nod', 'jump', 'crouch', 'wave', 'spin'][Math.floor(Math.random() * 5)];
       emotes.library[pick].run().catch(() => {});

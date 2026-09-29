@@ -2,6 +2,7 @@
 import { getLog } from '../log.js';
 import { findPlayer } from './helpers.js';
 import { canEngage, fight, noteAttacker } from './combat.js';
+import { combatFlags } from './combatModes.js';
 import { runAction } from './actions.js';
 
 const log = getLog('社交');
@@ -82,7 +83,7 @@ export class Social {
     if (entity.type === 'player' && entity.username && entity.username !== bot.username && agent.chat.isOwner(entity.username)) {
       if (source && source.type !== 'player') noteAttacker(agent, source, entity.username);
       if (cfg.protect_owner && source && canEngage(agent, source) && this.canJoinFight()
-        && source.position.distanceTo(bot.entity.position) < 32) {
+        && source.position.distanceTo(bot.entity.position) < combatFlags(agent).engage_radius) {
         log.info(`${source.name} 在打 ${entity.username}，去保护`);
         this.engage(source, `保护 ${entity.username}：${source.name}`);
       }
@@ -91,7 +92,7 @@ export class Social {
     // 主人在打怪（近战或者射箭）→ 记下，过去帮忙（远处的有弓就射）
     if (source?.type === 'player' && source.username !== bot.username && agent.chat.isOwner(source.username)) {
       noteAttacker(agent, entity, 'owner_target');
-      if (cfg.assist_owner && canEngage(agent, entity) && this.canJoinFight() && entity.position.distanceTo(bot.entity.position) < 48) {
+      if (cfg.assist_owner && canEngage(agent, entity) && this.canJoinFight() && entity.position.distanceTo(bot.entity.position) < combatFlags(agent).engage_radius) {
         log.info(`${source.username} 在打 ${entity.name}，去帮忙`);
         this.engage(entity, `帮 ${source.username} 打 ${entity.name}`);
       }

@@ -130,8 +130,21 @@ const fakeAgent = {
   chat: { isOwner: () => true }, affection: { get: () => ({ score: 50, level: '朋友' }) },
 };
 const menu = view.menuDialog(fakeAgent, 'Steve');
-check('菜单 按钮', menu.actions.length >= 10 && !JSON.stringify(menu).includes('/trigger'));
-check('菜单 行动按钮填命令', menu.actions.some((a) => a.action.type === 'suggest_command' && a.action.command === '#过来'));
+check('菜单 按钮（3 列）', menu.actions.length === 12 && menu.columns === 3 && !JSON.stringify(menu).includes('/trigger'));
+check('菜单 没装模组：私聊快捷命令', menu.actions.some((a) => a.action.type === 'run_command' && a.action.command === '/tell NJFU_Neko #过来'));
+const modMenu = view.menuDialog({ ...fakeAgent, menuButtons: true }, 'Steve');
+check('菜单 装了模组：/njfu ui', modMenu.actions.some((a) => a.action.command === '/njfu ui come') && modMenu.actions.some((a) => a.action.command === '/njfu ui panel'));
+const guestMenu = view.menuDialog({ ...fakeAgent, chat: { isOwner: () => false } }, 'Alex');
+check('菜单 非主人没有主人专用按钮', !JSON.stringify(guestMenu).includes('#过来') && JSON.stringify(guestMenu).includes('#摸头'));
+check('菜单 坐着时换成站起来', JSON.stringify(view.menuDialog({ ...fakeAgent, seated: true }, 'Steve')).includes('#起来'));
+check('菜单 按钮都对应快捷命令', Object.values(view.MENU_ACTIONS).every((a) => a.text.startsWith('#') && a.label && a.tip));
+const armorBot = {
+  inventory: { slots: { 5: { name: 'diamond_helmet' }, 6: { name: 'diamond_chestplate' }, 7: { name: 'diamond_leggings' }, 8: { name: 'diamond_boots' } } },
+  getEquipmentDestSlot: (d) => ({ head: 5, torso: 6, legs: 7, feet: 8 })[d],
+};
+check('状态 护甲值（全套钻石 20）', view.armorPoints(armorBot) === 20);
+const swordAgent = { ...fakeAgent, bot: { ...fakeAgent.bot, heldItem: { name: 'diamond_sword', count: 1 } } };
+check('状态 物品名按客户端语言显示', JSON.stringify(view.statusDialog(swordAgent, 'Steve')).includes('"translate":"item.minecraft.diamond_sword"'));
 
 // 5b. 战斗模式、药水、索敌
 const modes = await import('../src/bot/combatModes.js');
@@ -139,7 +152,13 @@ const potionsMod = await import('../src/bot/potions.js');
 const ballistics = await import('../src/bot/ballistics.js');
 const flagsFor = (mode, extra = {}) => modes.combatFlags({ cfg: { ...cfg, combat: { ...cfg.combat, mode, ...extra } } });
 check('模式 普通不跳劈', !flagsFor('普通').crits && flagsFor('困难').crits);
-check('模式 极限才用岩浆', flagsFor('极限').lava && !flagsFor('困难').lava);
+check('模式 困难以上用岩浆', flagsFor('困难').lava && flagsFor('极限').lava && !flagsFor('普通').lava);
+check('撤退 困难 1 颗心、普通 2 颗、极限半颗', combat.retreatHealth({ cfg }, flagsFor('困难')) === 2
+  && combat.retreatHealth({ cfg }, flagsFor('普通')) === 4 && combat.retreatHealth({ cfg }, flagsFor('极限')) === 1);
+const fireIdx = registry.entitiesByName.zombie.metadataKeys.indexOf('shared_flags');
+check('岩浆 能烫僵尸', combat.canBurn(fakeBot, ent('zombie')));
+check('岩浆 不烫不怕火的、末影人、女巫', !combat.canBurn(fakeBot, ent('blaze')) && !combat.canBurn(fakeBot, ent('enderman')) && !combat.canBurn(fakeBot, ent('witch')));
+check('岩浆 已经在烧的不再烫', fireIdx >= 0 && !combat.canBurn(fakeBot, ent('zombie', { metadata: Object.assign([], { [fireIdx]: 1 }) })));
 check('模式 开关能关掉', !flagsFor('极限', { lava: false }).lava);
 check('模式 作弊', flagsFor('作弊').cheat === true && flagsFor('cheat').mode === '作弊');
 check('药水 亡灵用治疗', potionsMod.offensiveKindsFor({ name: 'zombie' }).includes('healing') && !potionsMod.offensiveKindsFor({ name: 'zombie' }).includes('harming'));
@@ -155,10 +174,18 @@ const pickAgent = {
 };
 check('索敌 远处发狂的末影人也会去打', combat.pickTarget(pickAgent)?.id === 21);
 pickAgent.bot.entities = { 22: calmZombie };
-check('索敌 64 格外的僵尸不去', combat.pickTarget(pickAgent) === null);
-calmZombie.position = new Vec3(50, 64, 0);
-check('索敌 64 格内看得见的僵尸会去打', combat.pickTarget(pickAgent)?.id === 22);
-check('索敌 默认 64 格、和模式无关', flagsFor('普通').engage_radius === 64 && flagsFor('极限').engage_radius === 64);
+check('索敌 70 格外的僵尸不去', combat.pickTarget(pickAgent) === null);
+calmZombie.position = new Vec3(40, 64, 0);
+check('索敌 40 格的也不去（默认 32 格）', combat.pickTarget(pickAgent) === null);
+calmZombie.position = new Vec3(25, 64, 0);
+check('索敌 32 格内看得见的僵尸会去打', combat.pickTarget(pickAgent)?.id === 22);
+pickAgent.retreatUntil = Date.now() + 10_000;
+pickAgent.bot.health = 3;
+check('索敌 刚撤下来血少时先不找怪', combat.pickTarget(pickAgent) === null);
+pickAgent.retreatUntil = 0;
+pickAgent.bot.health = 20;
+check('索敌 默认 32 格、和模式无关', flagsFor('普通').engage_radius === 32 && flagsFor('极限').engage_radius === 32);
+check('索敌 末影龙、凋灵这类不受限', modes.LONG_RANGE.ender_dragon > 100 && modes.LONG_RANGE.wither > 32);
 check('索敌 范围可以改', modes.combatFlags({ cfg: { ...cfg, combat: { ...cfg.combat, engage_radius: 40 } } }).engage_radius === 40);
 pickAgent.unreachable = new Map([[22, Date.now() + 60_000]]);
 check('索敌 走不过去的先不选', combat.pickTarget(pickAgent) === null);
@@ -192,6 +219,46 @@ const req = store.add('Steve', '学会钓鱼');
 store.update(req.id, 'done', '好了');
 check('需求 记录', store.get(req.id)?.status === 'done' && store.open().length === 0);
 fs.rmSync(tmp, { force: true });
+
+// 7. 面板模组通知、OpenAI 兼容接口、打码
+const chatMod = await import('../src/bot/chat.js');
+check('面板通知 菜单按钮', JSON.stringify(chatMod.parseUiNotice('[NJFU-UI] do Steve pet')) === JSON.stringify({ action: 'do', player: 'Steve', what: 'pet' }));
+check('面板通知 右键和伪造', chatMod.parseUiNotice('[NJFU-UI] menu Steve')?.action === 'menu' && chatMod.parseUiNotice('<Steve> [NJFU-UI] do Steve stop') === null);
+const { ServerInfo } = await import('../src/bot/serverInfo.js');
+const si = new ServerInfo({});
+si.onCommands({ rootIndex: 0, nodes: [{ children: [1, 4] }, { extraNodeData: { name: 'njfu' }, children: [2, 3] }, { extraNodeData: { name: 'quiet' } },
+  { extraNodeData: { name: 'ui' } }, { extraNodeData: { name: 'tp' } }] }, new Set(['tp']));
+check('面板模组 识别子命令', si.njfuCommands.includes('quiet') && si.njfuCommands.includes('ui'));
+
+const oa = await import('../src/brain/openaiBrain.js');
+const fn = oa.openAiTools([{ name: 'say', description: '说话', input_schema: { type: 'object', properties: {} } }])[0];
+check('OpenAI 工具格式', fn.type === 'function' && fn.function.name === 'say' && fn.function.parameters.type === 'object');
+check('OpenAI 服务商预设', oa.PROVIDERS.deepseek.base_url === 'https://api.deepseek.com' && oa.PROVIDERS.openai.env === 'OPENAI_API_KEY');
+const brainAgent = {
+  cfg: { brain: { openai: { provider: 'custom', base_url: 'http://localhost:9/v1', model: 'test-model', max_tokens: 1000 } }, commands: cfg.commands, logging: {} },
+  on() {}, events: { push() {} },
+};
+const oaBrain = new oa.OpenAiBrain(brainAgent);
+const sent = [];
+const realFetch = globalThis.fetch;
+globalThis.fetch = async (url, init) => {
+  sent.push({ url, body: JSON.parse(init.body), auth: init.headers.Authorization });
+  if (sent.length === 1) {
+    return new Response(JSON.stringify({ error: { message: "Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead." } }), { status: 400 });
+  }
+  return new Response(JSON.stringify({ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: '好' } }], usage: { prompt_tokens: 5, completion_tokens: 1 } }), { status: 200 });
+};
+try {
+  const reply = await oaBrain.create([{ role: 'user', content: 'hi' }], new AbortController().signal);
+  check('OpenAI 请求格式', sent[0].url === 'http://localhost:9/v1/chat/completions' && sent[0].body.model === 'test-model' && sent[0].body.tools.length > 10
+    && sent[0].body.tool_choice === 'auto' && sent[0].body.max_tokens === 1000 && !sent[0].auth);
+  check('OpenAI 不认的参数自动换', sent.length === 2 && sent[1].body.max_completion_tokens === 1000 && !('max_tokens' in sent[1].body) && reply.choices[0].message.content === '好');
+} finally {
+  globalThis.fetch = realFetch;
+}
+const secretsMod = await import('../src/secrets.js');
+check('打码 OpenAI / DeepSeek 的 Key', !secretsMod.redact('用 sk-proj-AbCdEfGhIjKlMnOpQrStUv123456 调用').includes('AbCdEfGhIjKlMnOpQrStUv')
+  && !secretsMod.redact('sk-0123456789abcdef0123456789abcdef').includes('0123456789abcdef0123'));
 
 console.log(`${failed ? '✗' : '✓'} 自测：通过 ${passed} 项${failed ? `，失败 ${failed} 项` : ''}`);
 process.exit(failed ? 1 : 0);

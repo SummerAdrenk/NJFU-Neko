@@ -11,5 +11,6 @@ export const CHESTS_FILE = path.join(RUNTIME, 'chests.json');
 export const REQUESTS_FILE = path.join(RUNTIME, 'requests.json');
 export const HOME_FILE = path.join(RUNTIME, 'home.json');
 export const CONTROL_FILE = path.join(RUNTIME, 'control.json');
+export const WATCH_CURSOR_FILE = path.join(RUNTIME, 'watch-cursor.json');
 export const AUTH_DIR = path.join(RUNTIME, 'auth');
 export const TMP_DIR = path.join(RUNTIME, 'tmp');

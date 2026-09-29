@@ -64,12 +64,12 @@ watch 里出现 `功能需求（玩家）：#编号 内容` 就是有人提了�
 1. `node src/cli.js request <编号> accepted 一句话说明打算怎么做`（游戏里会通知提需求的人）。
 2. 改代码，风格和周围一致；需要的话在 `scripts/selftest.js` 里加检查。
 3. `npm test` 全部通过。
-4. `git add -A`，用用户的身份提交：`git -c user.name=SummerAdrenk -c user.email=summeradrenk@gmail.com commit -m "需求 #编号：…"`（一个需求一次提交，不加 Claude 署名）。
+4. `git add -A`，用用户的身份提交：`git commit -m "需求 #编号：…"`（提交身份用仓库本地的 git 配置，已经设成用户的账号；一个需求一次提交，不加 Claude 署名）。
 5. 按上一节重启猫娘，重新开 watch。
 6. `node src/cli.js request <编号> done 做了什么、怎么用`。
 - 回滚：`git revert <提交>`，重启，再 `request <编号> rejected 已撤回`。
 
 ## 6. 面板模组（mod/）
 
-`mod/` 是一个很小的 Fabric 模组（服务器端 + 客户端），装在游戏里后：右键猫娘打开她的人物面板（直接拿放物品），Shift+右键让她弹出功能菜单，`/njfu quiet <命令>` 让猫娘执行命令时不留灰色提示（只有猫娘自己能用）。程序会自动检测（命令树里有 njfu），有就用。
+`mod/` 是一个很小的 Fabric 模组（服务器端 + 客户端），装在游戏里后：右键猫娘打开她的人物面板（直接拿放物品），Shift+右键让她弹出功能菜单，`/njfu quiet <命令>` 让猫娘执行命令时不留灰色提示（只有猫娘自己能用），`/njfu ui <按钮>` 给功能菜单的按钮用（谁都能用：panel 打开人物面板，其他按钮转告猫娘，猫娘收到 `[NJFU-UI] do <玩家> <按钮>` 后当成这个玩家发了对应的快捷命令）。程序会自动检测（命令树里 njfu 下面有 quiet / ui），有就用。
 编译：`node mod/build.mjs --game "<.minecraft>/versions/<版本名>" --jdk <JDK目录>`，产物在 `mod/dist/`。

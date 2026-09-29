@@ -84,6 +84,7 @@ export class ServerInfo {
     this.namespaces = new Map();
     this.modCommands = [];
     this.allCommands = [];
+    this.njfuCommands = [];
   }
 
   note(namespace, source) {
@@ -153,6 +154,8 @@ export class ServerInfo {
       .map((i) => packet.nodes[i]?.extraNodeData?.name)
       .filter(Boolean);
     this.allCommands = names.sort();
+    const njfu = (root?.children ?? []).map((i) => packet.nodes[i]).find((n) => n?.extraNodeData?.name === 'njfu');
+    this.njfuCommands = (njfu?.children ?? []).map((i) => packet.nodes[i]?.extraNodeData?.name).filter(Boolean);
     this.modCommands = names.filter((n) => !vanilla.has(n) && !n.includes(':')).sort();
     for (const n of names) if (n.includes(':')) this.note(n.split(':')[0], 'command');
     log.fileOnly('debug', `可用命令 ${names.length} 个，非原版：${this.modCommands.join(' ') || '无'}`);

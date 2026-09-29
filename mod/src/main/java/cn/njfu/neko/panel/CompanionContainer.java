@@ -70,6 +70,11 @@ final class CompanionContainer implements Container {
 
     @Override
     public boolean stillValid(Player player) {
+        return inRange(player, companion);
+    }
+
+    /** 面板只在她身边 8 格内有效（同一个维度、她还活着）。 */
+    static boolean inRange(Player player, ServerPlayer companion) {
         return !companion.isRemoved() && companion.isAlive() && player.level() == companion.level() && player.distanceToSqr(companion) <= 64.0;
     }
 

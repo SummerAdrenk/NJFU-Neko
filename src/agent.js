@@ -19,7 +19,7 @@ import { createEmotes, installInteractions } from './bot/emotes.js';
 import { TextureIndex } from './bot/textures.js';
 import { runAction } from './bot/actions.js';
 import { findPlayer, Vec3 } from './bot/helpers.js';
-import { showMenuDialog, supportsDialog } from './bot/inventoryView.js';
+import { MENU_ACTIONS, showInventoryDialog, showMenuDialog, supportsDialog } from './bot/inventoryView.js';
 import { MemoryStore } from './memory.js';
 import { Affection } from './affection.js';
 import { ChestIndex } from './chestIndex.js';
@@ -118,15 +118,30 @@ export class Agent extends EventEmitter {
     return this.identity.say(text, opts);
   }
 
-  // 面板模组的通知：有人右键了她（模组已经打开了人物面板）或 Shift+右键（要功能菜单）。
-  onPanel({ action, player }) {
+  // 面板模组的通知：有人右键了她（模组已经打开了人物面板）、Shift+右键（要功能菜单）、点了菜单按钮（do）。
+  onPanel({ action, player, what }) {
     if (!this.online || !this.bot?.entity) return;
+    if (action === 'do') {
+      this.onMenuButton(player, what);
+      return;
+    }
     this.events.push('bot', { what: action === 'menu' ? 'menu_open' : 'panel_open', by: player });
     const e = findPlayer(this.bot, player)?.entity;
     if (e && Date.now() > (this.lookLockUntil ?? 0)) this.bot.lookAt(e.position.offset(0, e.eyeHeight ?? 1.6, 0)).catch(() => {});
     if (action !== 'menu') return;
     if (this.identity.opLevel >= 2 && supportsDialog(this)) showMenuDialog(this, player);
     else this.say('我还没有管理员权限，弹不出菜单喵……发 #帮助 看看我能做什么吧', { to: player });
+  }
+
+  // 功能菜单的按钮：当成这个玩家发了对应的快捷命令（bag = 离她太远开不了人物面板，改成弹背包窗口）
+  onMenuButton(player, what) {
+    this.events.push('bot', { what: 'menu_button', by: player, detail: what });
+    if (what === 'bag') {
+      if (this.identity.opLevel >= 2 && supportsDialog(this)) showInventoryDialog(this, player);
+      return;
+    }
+    const button = MENU_ACTIONS[what];
+    if (button) this.chat.runQuick(player, button.text);
   }
 
   runAction(name, input, ctx) {
@@ -141,7 +156,12 @@ export class Agent extends EventEmitter {
   // 装了面板模组（mod/ 目录）时，服务器会给猫娘一个 /njfu quiet 命令：用它执行管理员命令就不会在其他管理员的聊天栏里
   // 留下灰色的 [NJFU_Neko: …] 提示。没装时只能照常执行（原版的广播只能靠关掉 send_command_feedback 来避免，那会影响所有人）。
   get quietCommands() {
-    return this.serverInfo.allCommands.includes('njfu');
+    return this.serverInfo.njfuCommands.includes('quiet');
+  }
+
+  // 面板模组 1.0.2 起有 /njfu ui：功能菜单的按钮点一下就生效
+  get menuButtons() {
+    return this.serverInfo.njfuCommands.includes('ui');
   }
 
   adminCommand(command) {

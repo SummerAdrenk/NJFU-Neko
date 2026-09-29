@@ -21,7 +21,14 @@ if (!mods) {
 }
 const dist = path.join(HERE, 'dist');
 const builds = fs.existsSync(dist) ? fs.readdirSync(dist).filter((f) => /^njfu-neko-panel-.*\.jar$/.test(f)) : [];
-const latest = builds.map((f) => path.join(dist, f)).sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
+// 按版本号挑最新的（clone 下来的文件修改时间都一样，不能按时间挑）
+const version = (f) => (/-(\d+)\.(\d+)\.(\d+)\.jar$/.exec(f) ?? []).slice(1).map(Number);
+const newer = (a, b) => {
+  const [x, y] = [version(a), version(b)];
+  for (let i = 0; i < 3; i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (y[i] ?? 0) - (x[i] ?? 0);
+  return 0;
+};
+const latest = builds.sort(newer).map((f) => path.join(dist, f))[0];
 if (!latest) {
   console.error('mod/dist 里还没有编译好的模组，先运行 npm run build-mod');
   process.exit(1);

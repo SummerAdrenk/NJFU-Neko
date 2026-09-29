@@ -11,7 +11,7 @@ const BOT_WHAT = {
   op: '权限变化', emergency_stop: '急停', attacked: '被玩家攻击', gift: '收到礼物', pet: '被摸头',
   quick_command: '快捷命令', teleport: '传送', progress: '进度', player_death: '玩家死亡', ask_sleep: '问要不要一起睡',
   retreat: '撤退', affection_level: '好感等级变化', feature_request: '功能需求', setting: '设置变更', question: '提问',
-  clutch: '防摔', combat: '战斗', panel_open: '打开面板', menu_open: '打开菜单',
+  clutch: '防摔', combat: '战斗', panel_open: '打开面板', menu_open: '打开菜单', menu_button: '菜单按钮',
 };
 const CONNECTION = { connecting: '连接中', online: '已上线', offline: '已断开', kicked: '被踢出', error: '出错', handshake: '握手' };
 const BRAIN = { episode_start: '开始思考', episode_end: '思考结束', round: '一轮', refusal: '拒绝', fallback: '换备用模型', error: '出错', max_tokens: '回复太长被截断' };

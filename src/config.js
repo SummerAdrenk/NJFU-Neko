@@ -8,7 +8,10 @@ export const CONFIG_FILE = process.env.NEKO_CONFIG
   ? path.resolve(process.env.NEKO_CONFIG)
   : path.join(ROOT, 'config.toml');
 
-const BRAIN_MODES = { api: 'api', anthropic: 'api', 'claude-code': 'claude-code', claudecode: 'claude-code', none: 'none', off: 'none' };
+const BRAIN_MODES = {
+  api: 'api', anthropic: 'api', claude: 'api', 'claude-code': 'claude-code', claudecode: 'claude-code',
+  openai: 'openai', gpt: 'openai', chatgpt: 'openai', deepseek: 'openai', none: 'none', off: 'none',
+};
 
 function readToml(file) {
   const text = fs.readFileSync(file, 'utf8').replace(/^﻿/, '');
@@ -46,9 +49,12 @@ export function loadConfig() {
   if (env.NEKO_BRAIN) cfg.brain.mode = env.NEKO_BRAIN;
   if (env.NEKO_JAVA) cfg.viaproxy.java = env.NEKO_JAVA;
 
-  const mode = BRAIN_MODES[String(cfg.brain.mode).toLowerCase()];
-  if (!mode) throw new Error(`brain.mode 只能是 "api"、"claude-code" 或 "none"，现在是 "${cfg.brain.mode}"`);
+  const raw = String(cfg.brain.mode).toLowerCase();
+  const mode = BRAIN_MODES[raw];
+  if (!mode) throw new Error(`brain.mode 只能是 "api"（Claude）、"openai"（GPT、DeepSeek 等兼容接口）、"claude-code" 或 "none"，现在是 "${cfg.brain.mode}"`);
   cfg.brain.mode = mode;
+  // mode 直接写 "deepseek" 时，[brain.openai] 没改过服务商就按 DeepSeek 来
+  if (raw === 'deepseek' && (!cfg.brain.openai?.provider || cfg.brain.openai.provider === 'openai')) cfg.brain.openai = { ...cfg.brain.openai, provider: 'deepseek' };
 
   cfg.server.port = Number(cfg.server.port);
   cfg.viaproxy.jar = path.resolve(ROOT, cfg.viaproxy.jar);

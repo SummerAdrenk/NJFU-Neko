@@ -1,14 +1,14 @@
-// 战斗：索敌（被激怒的、正在打人的、主人射过的怪优先，范围随战斗模式变化）、蓄满再出手、跳劈（暴击）、
+// 战斗：索敌（被激怒的、正在打人的、主人射过的怪优先，日常 32 格，末影龙这类例外）、蓄满再出手、跳劈（暴击）、
 // 群怪时横扫和边打边退、冲刺击退、盾牌格挡、不死图腾、战斗间隙吃东西、药水（给自己 / 给主人 / 砸怪）、
-// 用船困住打不过的怪、水桶冲开怪群、岩浆桶烫怪（极限模式）、鞘翅撤离（极限模式）、弓箭 / 雪球，
+// 用船困住打不过的怪、水桶冲开怪群、岩浆桶先烫再打（困难以上）、鞘翅撤离（极限模式）、弓箭 / 雪球，
 // 以及苦力怕（按引信进度出手和撤离）、末影人、恶魂、烈焰人、幻翼、凋灵、末影龙等的专门打法。
 import { goals, makeMovements } from './createBot.js';
 import {
-  canMelee, durabilityLeft, equipBestWeapon, findPlayer, fleeFrom, gotoGoal, isAliveEntity, isEmpty, isHostile, isVehicleItemEntity, isWorn,
+  canMelee, durabilityLeft, equipBestWeapon, findPlayer, fleeFrom, gotoGoal, isAliveEntity, isHostile, isVehicleItemEntity, isWorn,
   LowHealthError, nearestThreat, preferRider, protectedReason, Vec3,
 } from './helpers.js';
 import { ARROW, SNOWBALL, solveBallistic } from './ballistics.js';
-import { combatFlags } from './combatModes.js';
+import { combatFlags, LONG_RANGE } from './combatModes.js';
 import { elytraTravel, pillarUp } from './movement.js';
 import { ALLY_KINDS, offensiveKindsFor, throwPotionAt, usePotion } from './potions.js';
 import { getLog } from '../log.js';
@@ -253,12 +253,14 @@ function canSee(bot, e) {
   }
 }
 
-// 索敌：从身边和主人身边的怪里挑最该打的。日常范围 64 格（#设置 索敌范围 可改，和战斗模式无关）；
+// 索敌：从身边和主人身边的怪里挑最该打的。日常范围 32 格（#设置 索敌范围 可改，和战斗模式无关；末影龙、凋灵、恶魂例外）；
 // 看不见的（墙后、地底下）只处理 6 格内的；走不过去的（追了一阵没进展）1 分钟内不再选。
 // 优先级：打过人的 > 被激怒的 > 正在追人的 > 靠近主人的苦力怕 > 远程怪 > 近的。
 export function pickTarget(agent, ownerName = null) {
   const bot = agent.bot;
   const f = combatFlags(agent);
+  // 刚撤下来、血还没回上来：先不去找怪（被打了照样还手）
+  if ((agent.retreatUntil ?? 0) > Date.now() && bot.health <= retreatHealth(agent, f) + 4) return null;
   const me = bot.entity.position;
   const owner = ownerName ? findPlayer(bot, ownerName)?.entity : ownerEntity(agent);
   let best = null;
@@ -271,7 +273,8 @@ export function pickTarget(agent, ownerName = null) {
     const angry = provoked(agent, e);
     const hitSomeone = recentlyAttacked(agent, e);
     const aggressive = (Number(meta(bot, e, 'mob_flags') ?? 0) & 4) !== 0;
-    if (near > f.engage_radius || Math.abs(e.position.y - me.y) > 24) continue;
+    const far = LONG_RANGE[e.name];
+    if (near > Math.max(f.engage_radius, far ?? 0) || (!far && Math.abs(e.position.y - me.y) > 24)) continue;
     if ((agent.unreachable?.get(e.id) ?? 0) > Date.now()) continue;
     if (!angry && !hitSomeone && near > 6 && !canSee(bot, e)) continue;
     let score = -near;
@@ -432,7 +435,10 @@ function clusterAround(agent, target) {
 // ── 走位安全：不退下悬崖、不走进岩浆火焰 ────────────────────
 
 const DANGER = /lava|fire|magma_block|cactus|sweet_berry_bush|campfire|powder_snow|wither_rose|pointed_dripstone/;
-const FLAMMABLE = /log|planks|wool|leaves|carpet|hay_block|bookshelf|_wood$|fence|stairs|door|scaffolding|vine|short_grass|tall_grass|fern|flower|tulip|bush|tnt|_bed$|banner|sign|lectern|composter|beehive|bee_nest|target|kelp_block|crafting_table|chest|barrel|campfire|loom/;
+// 倒岩浆的格子旁边不能有的：会烧起来的方块（草、花这些野外的不算，岩浆放下马上就收，来不及点着）和水（会变成黑曜石）
+const LAVA_UNSAFE = /log|planks|wool|leaves|carpet|hay_block|bookshelf|_wood$|fence|stairs|door|scaffolding|vine|tnt|_bed$|banner|sign|lectern|composter|beehive|bee_nest|target|kelp_block|crafting_table|chest|barrel|campfire|loom|water|bubble_column/;
+// 岩浆能直接倒进去的格子：空气，或者会被冲掉的草
+const LAVA_REPLACEABLE = /^(air|cave_air|short_grass|grass|fern|dead_bush|snow)$/;
 const solid = (b) => b && b.boundingBox === 'block';
 
 export function safeStep(bot, dir) {
@@ -461,22 +467,34 @@ function groundUnder(bot, spot) {
   return null;
 }
 
-const FIRE_IMMUNE = /^(blaze|magma_cube|ghast|strider|wither_skeleton|wither|ender_dragon|zombified_piglin|zoglin|warden)$/;
+const FIRE_IMMUNE = /^(blaze|magma_cube|ghast|happy_ghast|strider|wither_skeleton|wither|ender_dragon|zombified_piglin|zoglin|warden)$/;
+// 烫了没用的：末影人一挨烫就瞬移走；女巫着火会喝抗火药水
+const NO_LAVA = /^(enderman|witch)$/;
 
-// 倒岩浆的地方（放下马上收回，只要求紧挨着没有会烧的东西）；主人不能在旁边
+// 能不能用岩浆烫：活着、不怕火、身上没着火、不是烫了没用的
+export function canBurn(bot, e) {
+  if (!alive(bot, e) || FIRE_IMMUNE.test(e.name ?? '') || NO_LAVA.test(e.name ?? '')) return false;
+  return (Number(meta(bot, e, 'shared_flags') ?? 0) & 1) === 0;
+}
+
+// 倒岩浆的地方：紧挨着没有会烧的方块和水；主人不能在旁边
 function lavaSafe(agent, pos) {
   const bot = agent.bot;
   for (let dx = -1; dx <= 1; dx++) {
     for (let dy = -1; dy <= 1; dy++) {
       for (let dz = -1; dz <= 1; dz++) {
         const b = bot.blockAt(pos.offset(dx, dy, dz));
-        if (b && FLAMMABLE.test(b.name)) return false;
+        if (b && LAVA_UNSAFE.test(b.name)) return false;
       }
     }
   }
   const owner = ownerEntity(agent);
-  if (owner && owner.position.distanceTo(pos) < 3) return false;
-  return bot.entity.position.distanceTo(pos.offset(0.5, 0, 0.5)) >= 2;
+  return !owner || owner.position.distanceTo(pos.offset(0.5, 0, 0.5)) >= 2.5;
+}
+
+// 撤退线：配置里的撤退血量（默认 2 = 1 颗心）再按模式调整（普通 +2，极限和作弊 -1）
+export function retreatHealth(agent, flags = combatFlags(agent)) {
+  return Math.max(0, Number(agent.cfg.behavior?.retreat_health ?? 2) + (flags.retreat_bonus ?? 0));
 }
 
 // 对方（玩家）正在举盾：手在用、用的那只手拿着盾牌
@@ -540,7 +558,8 @@ export class Fighter {
     this.boats = new Set();
     this.placedFluids = [];
     this.nextHitAt = 0;
-    this.stats = { hits: 0, crits: 0, sweeps: 0, shots: 0, blocks: 0, potions: 0 };
+    this.stats = { hits: 0, crits: 0, sweeps: 0, shots: 0, blocks: 0, potions: 0, burns: 0 };
+    this.lavaTried = new Map(); // 烫过的敌人，一会儿内不再试
     agent.myBoats ??= new Set();
   }
 
@@ -714,7 +733,7 @@ export class Fighter {
     const t0 = Date.now();
     let falling = false;
     try {
-      const retreatAt = Number(this.agent.cfg.behavior.retreat_health ?? 8);
+      const retreatAt = retreatHealth(this.agent, this.flags);
       while (Date.now() - t0 < 800) {
         await this.wait(25);
         if (bot.health <= retreatAt) return false;
@@ -853,39 +872,36 @@ export class Fighter {
     const bot = this.bot;
     if (!['survival', 'adventure'].includes(bot.game?.gameMode)) return;
     await this.ensureTotem();
-    const retreatAt = Math.max(0, Number(this.agent.cfg.behavior.retreat_health ?? 8) + (this.flags.retreat_bonus ?? 0));
+    const retreatAt = retreatHealth(this.agent, this.flags);
     const burning = (Number(meta(bot, bot.entity, 'shared_flags') ?? 0) & 1) === 1;
     if (burning && bot.health <= 14 && !this.hasEffect('FireResistance') && await this.potion(['fire_resistance'])) return;
     if (this.hasEffect('Wither') && bot.health <= 12 && await this.consume(/^milk_bucket$/)) return;
-    if (bot.health <= Math.max(retreatAt, 8)) {
+    // 掉到半血：喝药、吃金苹果把血补上，接着打
+    if (bot.health <= 10) {
       if (await this.potion(['healing', 'regeneration', 'turtle_master'])) return;
       if (this.flags.golden_apples) {
         const apples = this.boss || this.flags.enchanted_apples ? /^(enchanted_)?golden_apple$/ : /^golden_apple$/;
         if (await this.consume(apples)) return;
       }
-      if (this.meleeCrowd(4) >= 2 && await this.pillar()) return;
     }
     if (bot.health < 16 && await this.snack()) return;
+    // 被围住、血又不多了：水桶把怪冲开，或者垫方块躲上去在上面接着打（不撤）
     const crowd = meleeHostiles(this.agent, 5, target).length + 1;
-    if (!this.perched && !this.boss && crowd >= 3 && bot.health <= 14) {
-      // 被围住又开始掉血：水桶冲开 → 垫方块躲上去 → 撤
+    if (!this.perched && !this.boss && crowd >= 3 && bot.health <= Math.max(retreatAt + 4, 6)) {
       if (await this.waterWall()) return;
       if (await this.pillar()) return;
-      this.lower();
-      this.stopMove();
-      this.manual();
-      await retreatFromCrowd(this.agent, this.signal);
-      this.agent.events.push('bot', { what: 'retreat', health: Math.round(bot.health), detail: `被 ${crowd} 只怪围住，先撤` });
-      throw new LowHealthError();
     }
-    const limit = this.boss ? Math.min(retreatAt, 5) : retreatAt;
+    // 真的快不行了（默认只剩 1 颗心）才撤：撤出来吃点东西，一会儿血回上来再打，不马上冲回去
+    const limit = this.boss ? Math.min(retreatAt, 2) : retreatAt;
     if (limit > 0 && bot.health <= limit && !this.perched) {
+      this.agent.retreatUntil = Date.now() + 12_000;
       this.lower();
       this.stopMove();
       this.manual();
       if (meleeHostiles(this.agent, 10).length > 1) await retreatFromCrowd(this.agent, this.signal);
       else await fleeFrom(this.agent, target, this.signal, { distance: 14, timeoutMs: 8000 });
       this.agent.events.push('bot', { what: 'retreat', health: Math.round(bot.health), detail: `从 ${target.name ?? target.username} 身边撤退` });
+      await this.snack().catch(() => false);
       throw new LowHealthError();
     }
   }
@@ -938,42 +954,75 @@ export class Fighter {
     return true;
   }
 
-  // 岩浆桶点一下（瞬放瞬收）：倒在目标脚下，等 4 刻左右它着了火，马上用空桶收回，岩浆来不及流开。
-  // 平时只在极限/作弊模式用；force（决斗真打、主人让打玩家时）不看模式。不怕火的、已经在烧的不用。
+  // 岩浆桶点一下（瞬放瞬收）：倒在敌人脚下，等一两刻它着了火（能烧 15 秒），马上用空桶收回，岩浆来不及流开。
+  // 能烫先烫：困难以上的模式，开打前、怪群里先把够得着的都烫一遍再砍；force（决斗真打、主人让打玩家时）不看模式。
+  // 不怕火的、已经在烧的、末影人（一烫就瞬移）、女巫（会喝抗火）不烫；下雨天露天的也不烫（雨马上把火浇灭）。
   async lavaStrike(target, { force = false } = {}) {
     const bot = this.bot;
-    if ((!this.flags.lava && !force) || Date.now() < (this.nextLava ?? 0) || FIRE_IMMUNE.test(target.name ?? '')) return false;
-    if ((Number(meta(bot, target, 'shared_flags') ?? 0) & 1) === 1) return false;
+    if ((!this.flags.lava && !force) || Date.now() < (this.nextLava ?? 0)) return false;
     const lava = findInv(bot, /^lava_bucket$/);
     if (!lava) return false;
-    const d = flat(bot.entity.position, target.position);
-    if (d < 2.2 || d > 4.3) return false;
-    const feet = target.position.floored();
-    const ground = bot.blockAt(feet.offset(0, -1, 0));
-    if (!solid(ground) || !isEmpty(bot.blockAt(feet)) || !lavaSafe(this.agent, feet)) return false;
-    this.nextLava = Date.now() + 6000;
+    const spot = this.lavaSpot(target);
+    if (!spot) return false;
+    const { feet } = spot;
+    const victims = spot.victims.length ? spot.victims : [target];
+    this.nextLava = Date.now() + 400;
+    for (const v of victims) this.lavaTried.set(v.id, Date.now() + 5000);
     this.lower();
     this.manual();
     this.stopMove();
     await holdItem(bot, lava);
     await bot.lookAt(new Vec3(feet.x + 0.5, feet.y, feet.z + 0.5), true);
-    await this.wait(60);
+    await this.wait(50);
     bot.activateItem();
     bot.deactivateItem();
     await this.wait(200);
-    // 顺势收回：手里现在是空桶
-    if (bot.blockAt(feet)?.name === 'lava') {
-      await bot.lookAt(new Vec3(feet.x + 0.5, feet.y + 0.5, feet.z + 0.5), true);
+    // 顺势收回：手里现在是空桶；没收到就再补两下
+    for (let i = 0; i < 3 && bot.blockAt(feet)?.name === 'lava'; i++) {
+      const bucket = bot.heldItem?.name === 'bucket' ? bot.heldItem : findInv(bot, /^bucket$/);
+      if (!bucket) break;
+      if (bot.heldItem !== bucket) await holdItem(bot, bucket);
+      await bot.lookAt(new Vec3(feet.x + 0.5, feet.y + 0.4, feet.z + 0.5), true);
       await this.wait(50);
       bot.activateItem();
       bot.deactivateItem();
-      await this.wait(100);
+      await this.wait(120);
     }
-    if (bot.blockAt(feet)?.name === 'lava') this.placedFluids.push(feet.clone()); // 没收回来的打完再收
-    this.agent.events.push('bot', { what: 'combat', detail: `岩浆桶点了一下 ${target.username ?? target.name}（放下就收回）` });
+    if (bot.blockAt(feet)?.name === 'lava') this.placedFluids.push(feet.clone()); // 还没收回来的，打完再收
+    this.stats.burns += 1;
+    this.agent.events.push('bot', { what: 'combat', detail: `岩浆桶烫了 ${victims.map((v) => v.username ?? v.name).join('、')}（放下就收回）` });
     this.lastSwap = Date.now();
     await this.ensureWeapon();
     return true;
+  }
+
+  // 找倒岩浆的格子：够得着的敌人（目标和身边 6 格内的）脚下，往它走的方向提前一点；挤在同一格的一起烫。
+  // 要求：脚下是实心方块、格子空着（或者只有草）、离眼睛 4.4 格内、自己不站在里面、格子里只有要烫的敌人
+  // （没有主人、别的玩家、宠物、掉落物），紧挨着没有会烧的方块和水，不是下雨天的露天。
+  lavaSpot(target) {
+    const bot = this.bot;
+    const now = Date.now();
+    const me = bot.entity.position;
+    const from = eye(bot);
+    const enemies = [target, ...meleeHostiles(this.agent, 6, target)].filter((e) => e?.position && canBurn(bot, e)
+      && (this.lavaTried.get(e.id) ?? 0) < now
+      && !(e.name === 'creeper' && (meta(bot, e, 'swell_dir') > 0 || flat(me, e.position) < 3.4)));
+    let best = null;
+    for (const e of enemies) {
+      const v = e.velocity ?? { x: 0, z: 0 };
+      const feet = e.position.offset(v.x * 3, 0, v.z * 3).floored();
+      if (new Vec3(feet.x + 0.5, feet.y, feet.z + 0.5).distanceTo(from) > 4.4) continue;
+      if (Math.max(Math.abs(me.x - feet.x - 0.5), Math.abs(me.z - feet.z - 0.5)) < 0.95 && me.y > feet.y - 1.8 && me.y < feet.y + 1) continue;
+      const cell = bot.blockAt(feet);
+      if (!solid(bot.blockAt(feet.offset(0, -1, 0))) || !cell || !LAVA_REPLACEABLE.test(cell.name)) continue;
+      if (bot.isRaining && (cell.skyLight ?? 0) >= 15) continue;
+      const box = { minX: feet.x, maxX: feet.x + 1, minY: feet.y, maxY: feet.y + 1, minZ: feet.z, maxZ: feet.z + 1 };
+      const inside = Object.values(bot.entities).filter((o) => o !== bot.entity && o.position && overlaps(box, bbox(o)));
+      if (inside.some((o) => !enemies.includes(o)) || !lavaSafe(this.agent, feet)) continue;
+      const score = inside.length * 10 + (e === target ? 5 : 0) - e.position.distanceTo(me);
+      if (!best || score > best.score) best = { feet, victims: inside, score };
+    }
+    return best;
   }
 
   // ── 打玩家（决斗和平时共用）──
@@ -1311,8 +1360,8 @@ export class Fighter {
         await this.wait(100);
         continue;
       }
-      // 怪堆就在前面：先砸药水，再试岩浆
-      if (!trapped && (await this.potionAtCrowd(target) || await this.lavaStrike(target))) continue;
+      // 能烫先烫：够得着的敌人先用岩浆桶点一下（群怪就一只只烫过去），再砍；怪堆远一点就砸药水
+      if (!trapped && (await this.lavaStrike(target) || await this.potionAtCrowd(target))) continue;
       // 远了：远程怪或者正冲过来的，有弓先射几箭；否则用寻路靠近（能绕开障碍）
       if (d > 10 && this.flags.bow && hasBow(bot) && !trapped && target.name !== 'enderman') {
         await this.shoot(target);
@@ -1383,6 +1432,8 @@ export class Fighter {
         if (d < 6) await this.runFrom(target, 10, 3000);
         return false;
       }
+      // 还没膨胀、离得够远：先用岩浆桶烫一下
+      if (!swelling && d >= 3.4 && await this.lavaStrike(target)) continue;
       await this.ensureWeapon();
       if (d > 6) {
         this.follow(target, 3.5);
@@ -1724,14 +1775,16 @@ export class Fighter {
 
 // 打一个目标直到它倒下 / 跑远 / 超时。血量过低时撤退并抛出 LowHealthError。返回是否打倒。
 export async function fight(agent, target, signal, timeoutMs = 45_000, opts = {}) {
+  // 坐着的时候要打架：先站起来
+  if (agent.seated) await agent.emotes?.library?.stand?.run().catch(() => {});
   const f = new Fighter(agent, signal, opts);
   agent.fighting = (agent.fighting ?? 0) + 1;
   try {
     await f.equip();
     const won = await f.run(target, Date.now() + timeoutMs);
-    const { hits, crits, sweeps, shots, blocks, potions } = f.stats;
-    if (hits + shots + potions) {
-      log.debug(`${target.name ?? target.username}：出手 ${hits} 次（暴击 ${crits}、横扫 ${sweeps}），射击 ${shots} 次，举盾 ${blocks} 次，药水 ${potions} 瓶（${f.flags.mode}模式）`);
+    const { hits, crits, sweeps, shots, blocks, potions, burns } = f.stats;
+    if (hits + shots + potions + burns) {
+      log.debug(`${target.name ?? target.username}：出手 ${hits} 次（暴击 ${crits}、横扫 ${sweeps}），岩浆烫 ${burns} 次，射击 ${shots} 次，举盾 ${blocks} 次，药水 ${potions} 瓶（${f.flags.mode}模式）`);
     }
     return won;
   } finally {

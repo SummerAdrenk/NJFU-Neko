@@ -2,9 +2,9 @@
 
 const secrets = new Set();
 
-// Anthropic API Key、Bearer 令牌、形如 key=xxx 的赋值。
+// API Key（Anthropic 的 sk-ant-，OpenAI 的 sk- / sk-proj-，DeepSeek 的 sk-）、Bearer 令牌、形如 key=xxx 的赋值。
 const PATTERNS = [
-  /sk-ant-[A-Za-z0-9_-]{8,}/g,
+  /\bsk-[A-Za-z0-9_-]{16,}/g,
   /\bBearer\s+[A-Za-z0-9._~+/=-]{16,}/gi,
   /\b(api[_-]?key|x-api-key|auth[_-]?token|access[_-]?token|x-neko-token)(["']?\s*[:=]\s*["']?)([^\s"',;]{8,})/gi,
 ];
@@ -38,7 +38,7 @@ export function redactDeep(value) {
 export function looksSecret(text) {
   const s = String(text);
   for (const secret of secrets) if (s.includes(secret)) return true;
-  return /sk-ant-[A-Za-z0-9_-]{8,}/.test(s);
+  return /\bsk-[A-Za-z0-9_-]{16,}/.test(s);
 }
 
 // 给子进程（ViaProxy）用的环境变量：去掉所有看起来像密钥的变量。

@@ -39,6 +39,8 @@ export class TaskManager {
   // 启动任务；waitMs 内结束就返回结果，否则返回“后台进行中”，结束时会发出 taskEnded 事件。
   async run(name, desc, fn, { waitMs = 60_000, by = null } = {}) {
     if (this.current) await this.cancel(`被新任务「${desc}」替换`);
+    // 坐着的时候接到要走动的任务：先站起来（陪伴循环里坐着就是原地陪着）
+    if (this.agent.seated && name !== 'companion') await this.agent.emotes?.library?.stand?.run().catch(() => {});
     const controller = new AbortController();
     const task = { id: this.nextId++, name, desc, by, startedAt: Date.now(), controller, signal: controller.signal, status: 'running', detached: false };
     this.current = task;

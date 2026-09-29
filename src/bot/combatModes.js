@@ -12,18 +12,18 @@ const BASE = {
 };
 export const MODES = {
   普通: { ...BASE },
-  困难: { ...BASE, crits: true, boat_trap: true, creeper_melee: true, pillar: true, water: true, pearls: true, retreat_bonus: 0 },
+  困难: { ...BASE, crits: true, boat_trap: true, creeper_melee: true, pillar: true, water: true, lava: true, pearls: true, retreat_bonus: 0 },
   极限: {
     ...BASE, crits: true, boat_trap: true, creeper_melee: true, pillar: true, water: true, lava: true, elytra: true, pearls: true, enchanted_apples: true,
-    retreat_bonus: -2,
+    retreat_bonus: -1,
   },
 };
 MODES.作弊 = { ...MODES.极限, cheat: true };
 export const MODE_NAMES = Object.keys(MODES);
 export const MODE_DESC = {
-  普通: '会用盾牌、弓箭、药水和金苹果救急；不跳劈、不船困',
-  困难: '跳劈、横扫、边打边退、船困怪、水桶冲开怪群、垫高躲怪、按引信打苦力怕',
-  极限: '困难的全部 + 岩浆桶烫怪、鞘翅撤离、附魔金苹果，撤退线更低',
+  普通: '会用盾牌、弓箭、药水和金苹果救急；不跳劈、不船困，剩 2 颗心就撤',
+  困难: '岩浆桶先烫再打、跳劈、横扫、边打边退、船困怪、水桶冲开怪群、垫高躲怪、按引信打苦力怕，剩 1 颗心才撤',
+  极限: '困难的全部 + 鞘翅撤离、附魔金苹果，剩半颗心才撤',
   作弊: '极限 + 临时的顶级附魔装备（下界合金或钻石套）、附魔金苹果、不死图腾、各种药水，切回来时收回',
 };
 const ALIASES = { normal: '普通', easy: '普通', hard: '困难', extreme: '极限', max: '极限', cheat: '作弊' };
@@ -36,11 +36,14 @@ export function combatFlags(agent) {
   const preset = MODES[mode];
   const out = { mode };
   for (const [k, v] of Object.entries(preset)) out[k] = typeof v === 'boolean' ? v && c[k] !== false : v;
-  // 日常索敌范围和模式无关：默认 64 格（#设置 索敌范围 可改）
+  // 日常索敌范围和模式无关：默认 32 格（#设置 索敌范围 可改）
   const r = Number(c.engage_radius);
-  out.engage_radius = Number.isFinite(r) && r > 0 ? Math.min(96, Math.max(4, r)) : 64;
+  out.engage_radius = Number.isFinite(r) && r > 0 ? Math.min(96, Math.max(4, r)) : 32;
   return out;
 }
+
+// 不受日常索敌范围限制的：末影龙、凋灵这种在天上绕大圈的 Boss，远远放火球的恶魂（有弓才打）
+export const LONG_RANGE = { ender_dragon: 160, wither: 96, ghast: 64 };
 
 // ── 作弊模式的临时装备 ──
 // 物品带 custom_data {neko_temp:1b} 标记，退出作弊模式时用 /clear 按标记收回，再穿回原来的装备。
@@ -61,7 +64,8 @@ function cheatKit(tier, { gapples = 4, totems = 2, potions = true, elytra = fals
     ['bow', { power: 5, punch: 1, flame: 1, infinity: 1, unbreaking: 3 }, 1],
     ['shield', { unbreaking: 3, mending: 1 }, 1],
   ].map(([item, e, n]) => `${item}[${ench(e)},${TEMP}] ${n}`);
-  kit.push(`arrow[${TEMP}] 64`, `ender_pearl[${TEMP}] 16`, `golden_apple[${TEMP}] 16`, `cooked_beef[${TEMP}] 32`, `oak_boat[${TEMP}] 1`, `water_bucket[${TEMP}] 1`, `cobblestone[${TEMP}] 64`);
+  kit.push(`arrow[${TEMP}] 64`, `ender_pearl[${TEMP}] 16`, `golden_apple[${TEMP}] 16`, `cooked_beef[${TEMP}] 32`, `oak_boat[${TEMP}] 1`, `water_bucket[${TEMP}] 1`,
+    `lava_bucket[${TEMP}] 1`, `cobblestone[${TEMP}] 64`);
   if (gapples > 0) kit.push(`enchanted_golden_apple[${TEMP}] ${gapples}`);
   if (totems > 0) kit.push(`totem_of_undying[${TEMP}] ${totems}`);
   if (potions) {
@@ -80,6 +84,7 @@ export async function giveCheatKit(agent, opts = {}) {
   if (agent.identity.opLevel < 2) throw new Error('作弊模式要管理员权限（/give）');
   const free = bot.inventory.emptySlotCount();
   const kit = cheatKit(opts.tier ?? agent.cfg.combat?.cheat_tier, opts);
+  agent.cheatBuckets ??= bucketCount(bot);
   if (free < kit.length) throw new Error(`背包空位不够（要 ${kit.length} 格，现在只有 ${free} 格），先帮我清一清背包吧`);
   // 第一条不用静默，用它的回显检查命令格式对不对
   const replies = await agent.chat.capture(async () => bot.chat(`/give ${bot.username} ${kit[0]}`), 1200);
@@ -107,11 +112,25 @@ export function isTemp(item) {
   return Boolean(data && JSON.stringify(data).includes('neko_temp'));
 }
 
+// 桶（空桶、水桶、岩浆桶）：倒过、收过的桶是新物品，没有临时标记，收回时按发之前的数量把多出来的退掉
+const BUCKETS = ['bucket', 'water_bucket', 'lava_bucket'];
+const bucketCount = (bot) => bot.inventory.items().filter((i) => BUCKETS.includes(i.name)).reduce((s, i) => s + i.count, 0);
+
 export async function removeCheatKit(agent) {
   const bot = agent.bot;
   if (agent.identity.opLevel < 2) return false;
   agent.adminCommand(`clear ${bot.username} *[custom_data~{neko_temp:1b}]`);
   await sleep(800);
+  let extra = agent.cheatBuckets != null ? bucketCount(bot) - agent.cheatBuckets : 0;
+  agent.cheatBuckets = null;
+  for (const name of BUCKETS) {
+    if (extra <= 0) break;
+    const n = Math.min(extra, bot.inventory.items().filter((i) => i.name === name).reduce((s, i) => s + i.count, 0));
+    if (n <= 0) continue;
+    agent.adminCommand(`clear ${bot.username} minecraft:${name} ${n}`);
+    extra -= n;
+    await sleep(150);
+  }
   await bot.armorManager?.equipAll?.();
   const shield = bot.inventory.items().find((i) => i.name === 'shield');
   if (shield && bot.inventory.slots[bot.getEquipmentDestSlot('off-hand')]?.name !== 'shield') await bot.equip(shield, 'off-hand').catch(() => {});
