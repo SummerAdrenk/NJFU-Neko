@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { loadConfig } from './config.js';
 import { applyOverrides } from './settings.js';
 import { EventLog, getLog, logger } from './log.js';
-import { EVENTS_FILE, LOG_DIR, ROOT } from './paths.js';
+import { CONTROL_FILE, EVENTS_FILE, LOG_DIR, ROOT } from './paths.js';
 import { Agent } from './agent.js';
 import { startControlServer } from './control/server.js';
 import { ApiBrain } from './brain/apiBrain.js';
@@ -47,6 +47,24 @@ function checkSecretsNotTracked(cfg) {
   }
 }
 
+// 已经有一个猫娘在跑（它的控制接口还能访问）：返回它的信息。两个同时跑会用同一个名字登录，
+// 一个连上就把另一个挤下线，还会互相把对方的 ViaProxy 当成残留进程杀掉，每十几秒掉一次线
+export async function runningInstance() {
+  let info;
+  try {
+    info = JSON.parse(fs.readFileSync(CONTROL_FILE, 'utf8'));
+  } catch {
+    return null;
+  }
+  if (!info?.url || info.pid === process.pid) return null;
+  try {
+    const res = await fetch(`${info.url}/health`, { signal: AbortSignal.timeout(1500) });
+    return res.ok ? info : null;
+  } catch {
+    return null;
+  }
+}
+
 async function main() {
   let cfg;
   try {
@@ -63,6 +81,13 @@ async function main() {
   const overridden = applyOverrides(cfg);
   if (overridden) log.info(`应用了游戏里 #设置 改过的 ${overridden} 项设置（runtime/overrides.json）`);
   checkSecretsNotTracked(cfg);
+
+  const other = await runningInstance();
+  if (other) {
+    log.warn(`猫娘已经在运行了（进程 ${other.pid}，${other.url}），这次不再启动第二个。`);
+    log.warn('要重启她：先运行 npm run ctl -- stop 让她下线，再重新启动。');
+    process.exit(0);
+  }
 
   const events = new EventLog(EVENTS_FILE);
   const agent = new Agent(cfg, events);
