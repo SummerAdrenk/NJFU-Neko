@@ -2,6 +2,8 @@
 // 所有难度都锁 1 滴血——谁先被打到只剩 1 滴血谁输，谁都不会被打死（吃金苹果、图腾触发后的黄心没打掉之前不算输）。
 // 装了面板模组 1.0.4+：模组拦住致命伤害（有图腾时让图腾触发），附近的爆炸不破坏方块，还能替双方保管背包、直接穿上临时装备。
 // 没装：她收尾改用空手打，保证不会打死对方；装备发进背包，打完按标记收回；不用爆炸。
+// 决斗场（duelArena.js）：默认在原地正上方现搭一个空中黑曜石平台（也可以设成家正上方，或者不用），两人传送上去打，
+// 打完清场、拆掉，送回原来的位置。结束时不在线的（掉线了）记下来，等他上线再送回去；没拆掉的场地也记着，她路过时再拆。
 import fs from 'node:fs';
 import path from 'node:path';
 import { makeMovements } from './createBot.js';
@@ -9,6 +11,7 @@ import { equipBestWeapon, findPlayer } from './helpers.js';
 import { Fighter } from './combat.js';
 import { giveKitLines } from './combatModes.js';
 import { duelKit, duelLevel, parseDuelLevel } from './duelKits.js';
+import { ARENA, arenaLoaded, arenaMode, arenaSeats, inArena, prepareArena, removeArena } from './duelArena.js';
 import { absorption, DuelTactics } from './duelTactics.js';
 import { usePotion } from './potions.js';
 import { eatBest } from './survival.js';
@@ -20,11 +23,24 @@ const log = getLog('决斗');
 const STATS_FILE = path.join(RUNTIME, 'duels.json');
 const LOCK_HP = 1;
 const WEAPON_DAMAGE = { netherite_sword: 8, diamond_sword: 7, iron_sword: 6, stone_sword: 5, golden_sword: 4, wooden_sword: 4, netherite_axe: 10, diamond_axe: 9, iron_axe: 9, stone_axe: 9, golden_axe: 7, wooden_axe: 7, mace: 6, trident: 9 };
+const sameArena = (a, b) => Boolean(a && b && a.x === b.x && a.y === b.y && a.z === b.z);
+
+function readPending() {
+  try {
+    return JSON.parse(fs.readFileSync(DUEL_PENDING_FILE, 'utf8')) ?? {};
+  } catch {
+    return {};
+  }
+}
 
 export class Duels {
   constructor(agent) {
     this.agent = agent;
     this.active = null;
+    // 决斗结束时不在线、还没送回原处的玩家：{ 名字: { x, y, z, dim, arena, at } }
+    this.returns = {};
+    // 还没拆掉的决斗场（有人掉线在上面，或者当时区块没加载）
+    this.staleArenas = [];
     try {
       this.stats = JSON.parse(fs.readFileSync(STATS_FILE, 'utf8'));
     } catch {
@@ -55,10 +71,15 @@ export class Duels {
     return s ? `${player} 对猫娘的战绩：${s.win} 胜 ${s.lose} 负 ${s.draw} 平` : `${player} 还没和猫娘决斗过`;
   }
 
-  // 决斗要收尾的事（锁血、保管的背包、放下的方块）记到磁盘：中途断线的话，重新上线时补上
+  // 决斗要收尾的事（锁血、保管的背包、放下的方块、决斗场、原来的位置）记到磁盘：中途断线的话，重新上线时补上
   savePending() {
     const a = this.active;
-    const data = a ? { player: a.player, bot: this.agent.bot?.username, locked: Boolean(a.locked), stashed: a.stashed ?? [], placed: a.placed ?? [], at: Date.now() } : {};
+    const data = a ? {
+      player: a.player, bot: this.agent.bot?.username, locked: Boolean(a.locked), stashed: a.stashed ?? [], placed: [...(a.placed ?? []), ...(a.fluids ?? [])],
+      arena: a.arena ?? null, returnTo: a.returnTo ?? null, at: Date.now(),
+    } : {};
+    data.returns = this.returns;
+    data.stale = this.staleArenas;
     try {
       fs.mkdirSync(RUNTIME, { recursive: true });
       fs.writeFileSync(DUEL_PENDING_FILE, `${JSON.stringify(data)}\n`);
@@ -67,22 +88,126 @@ export class Duels {
     }
   }
 
-  // 上线时：上次决斗没收完尾（断线了）就补上——解除锁血、把保管的背包还回去、清掉放下的方块
+  // 刚上线就悬在建筑上限上面（去搭决斗场时断线了）：马上给缓降、送回原处，免得掉下去
+  rescueHover() {
+    const agent = this.agent;
+    const bot = agent.bot;
+    if (!bot?.entity || bot.entity.position.y < ARENA.top || agent.identity.opLevel < 2) return;
+    const back = readPending().returnTo?.[bot.username];
+    agent.adminCommand(`effect give ${bot.username} minecraft:slow_falling 30 0 true`);
+    if (back) agent.adminCommand(`execute in ${back.dim ?? 'minecraft:overworld'} run tp ${bot.username} ${back.x} ${back.y} ${back.z}`);
+  }
+
+  // 上线时：上次决斗没收完尾（断线了）就补上——解除锁血、把保管的背包还回去、送回原处、拆决斗场；
+  // 还有决斗结束时不在线的玩家（等他上线再送回去）、没拆掉的决斗场（她路过时再拆）
   async recover() {
     const agent = this.agent;
     const bot = agent.bot;
-    let p = null;
-    try {
-      p = JSON.parse(fs.readFileSync(DUEL_PENDING_FILE, 'utf8'));
-    } catch {
+    const p = readPending();
+    this.returns = { ...(p.returns ?? {}), ...this.returns };
+    for (const a of p.stale ?? []) this.keepStale(a, false);
+    if (!bot.nekoDuelHooks) {
+      bot.nekoDuelHooks = true;
+      // 掉线的对手重新上线：他会出现在决斗场上，趁他还在加载时就送回去
+      bot.on('playerJoined', (pl) => {
+        if (!this.returns[pl.username]) return;
+        setTimeout(() => {
+          const r = this.returns[pl.username];
+          if (!r || agent.bot !== bot || !agent.online) return;
+          this.sendBack(pl.username, r);
+          this.savePending();
+          agent.say(`${pl.username} 回来啦～上次决斗打到一半你掉线了，送你回决斗前的地方`);
+        }, 500);
+      });
+      const sweep = setInterval(() => this.sweepStale(bot).catch(() => {}), 20_000);
+      bot.once('end', () => clearInterval(sweep));
+    }
+    if (agent.identity.opLevel < 2) return;
+    if (p.player && !this.active) await this.finishInterrupted(p);
+    // 等着送回去的人已经在线：还在决斗场上就送回去；已经自己走开了（或者记了超过 1 小时）就不管了
+    for (const [who, r] of Object.entries(this.returns)) {
+      if (!bot.players?.[who]) continue;
+      const e = findPlayer(bot, who)?.entity;
+      if (e && r.arena && inArena(r.arena, e.position)) this.sendBack(who, r);
+      else if (e || Date.now() - (r.at ?? 0) > 3_600_000) delete this.returns[who];
+    }
+    this.savePending();
+  }
+
+  // 送回决斗前的位置；不在线的先记着，等他上线再送
+  sendBack(who, pos, arena = pos?.arena ?? null) {
+    const bot = this.agent.bot;
+    if (!pos) return;
+    if (who !== bot.username && !bot.players?.[who]) {
+      this.returns[who] = { x: pos.x, y: pos.y, z: pos.z, dim: pos.dim, arena, at: Date.now() };
       return;
     }
-    if (!p?.player || this.active || agent.identity.opLevel < 2) return;
+    delete this.returns[who];
+    this.agent.adminCommand(`execute in ${pos.dim ?? 'minecraft:overworld'} run tp ${who} ${pos.x} ${pos.y} ${pos.z}`);
+  }
+
+  keepStale(arena, save = true) {
+    if (!arena || this.staleArenas.some((s) => sameArena(s, arena))) return;
+    this.staleArenas.push({ x: arena.x, y: arena.y, z: arena.z, kind: arena.kind });
+    if (save) this.savePending();
+  }
+
+  // 打完（或者补收尾时）：对手送回原处（不在线的记着，上线再送）；她带着缓降把场地拆掉，再回原处。
+  // 有对手掉线时场地先留着（他上线会出现在场地上），拆不掉的也记着。onlyInside：只送还还站在场地上的人
+  async closeArena(arena, returnTo, { onlyInside = false } = {}) {
+    const agent = this.agent;
+    const bot = agent.bot;
+    let waiting = false;
+    for (const [who, pos] of Object.entries(returnTo ?? {})) {
+      if (who === bot.username) continue;
+      const e = findPlayer(bot, who)?.entity;
+      if (onlyInside && bot.players?.[who] && !(e && inArena(arena, e.position))) continue;
+      this.sendBack(who, pos, arena);
+      if (this.returns[who]) waiting = true;
+    }
+    agent.adminCommand(`effect give ${bot.username} minecraft:slow_falling 15 0 true`);
+    await sleep(400);
+    const removed = !waiting && await removeArena(agent, arena).catch(() => false);
+    if (removed) this.staleArenas = this.staleArenas.filter((s) => !sameArena(s, arena));
+    else this.keepStale(arena, false);
+    const me = returnTo?.[bot.username];
+    if (me && (!onlyInside || inArena(arena, bot.entity.position))) this.sendBack(bot.username, me);
+    await sleep(800);
+    agent.adminCommand(`effect clear ${bot.username} minecraft:slow_falling`);
+  }
+
+  // 没拆掉的决斗场：没人等着从上面送回去、那边的区块加载了、上面没人，就拆掉
+  async sweepStale(bot) {
+    const agent = this.agent;
+    if (agent.bot !== bot || !agent.online || this.active || !this.staleArenas.length || agent.identity.opLevel < 2) return;
+    for (const a of [...this.staleArenas]) {
+      if (Object.values(this.returns).some((r) => sameArena(r.arena, a))) continue;
+      if (!arenaLoaded(bot, a)) continue;
+      if (Object.values(bot.entities).some((e) => e.type === 'player' && inArena(a, e.position))) continue;
+      if (await removeArena(agent, a).catch(() => false)) {
+        this.staleArenas = this.staleArenas.filter((s) => !sameArena(s, a));
+        this.savePending();
+        log.info(`拆掉了之前留下的决斗场（${a.x}, ${a.y}, ${a.z}）`);
+      }
+    }
+  }
+
+  // 补上中断的决斗的收尾
+  async finishInterrupted(p) {
+    const agent = this.agent;
+    const bot = agent.bot;
     if (p.locked) agent.adminCommand(`njfu duel off ${p.player} ${p.bot ?? bot.username}`);
     for (const who of p.stashed ?? []) {
       await agent.chat.capture(async () => bot.chat(`/njfu stash restore ${who}`), 1200).catch(() => {});
     }
-    for (const b of p.placed ?? []) agent.adminCommand(`setblock ${b.x} ${b.y} ${b.z} air`);
+    if (p.arena) {
+      await this.closeArena(p.arena, p.returnTo, { onlyInside: true });
+    } else {
+      this.clearArena(p.placed ?? []);
+      // 搭决斗场时断线了（对手还没传送过去）：只把她自己送回去
+      const me = p.returnTo?.[bot.username];
+      if (me && bot.entity.position.y > ARENA.floorY - 10) this.sendBack(bot.username, me);
+    }
     if ((p.stashed ?? []).length) {
       await bot.armorManager?.equipAll?.();
       await equipBestWeapon(bot);
@@ -90,7 +215,6 @@ export class Duels {
     agent.say(`刚才和 ${p.player} 的决斗断开了，装备都换回来了，东西原样还给你们了喵`);
     log.info(`补上了中断的决斗收尾（${p.player}）`);
     this.active = null;
-    this.savePending();
   }
 
   surrender(player) {
@@ -99,7 +223,8 @@ export class Duels {
     return true;
   }
 
-  // 开始决斗（作为一个长任务）。difficulty：难度 id 或中文名（easy / normal / hard…hard6 / cheat…cheat6，“困难Ⅲ”也行）
+  // 开始决斗（作为一个长任务）。difficulty：难度 id 或中文名（easy / normal / hard…hard6 / cheat…cheat6，“困难Ⅲ”也行）；
+  // ctx.arena：这一局在哪打（home / here / off，不填按设置，默认原地上空）
   start(player, difficulty = 'normal', ctx = {}) {
     const agent = this.agent;
     const bot = agent.bot;
@@ -110,6 +235,7 @@ export class Duels {
     if (this.active) throw new Error(`我正在和 ${this.active.player} 决斗`);
     if (agent.identity.opLevel < 2) throw new Error('决斗要临时发装备，需要管理员权限');
     const level = parseDuelLevel(difficulty) ?? duelLevel('normal');
+    const mode = arenaMode(ctx.arena) ?? arenaMode(cfg.arena) ?? 'here';
     const username = p.username;
     return agent.tasks.run('duel', `和 ${username} 决斗（${level.name}）`, async (task) => {
       this.active = { player: username, surrendered: false, placed: [], fluids: [], stashed: [] };
@@ -124,10 +250,39 @@ export class Duels {
       const kit = duelKit(level, { fire: locked });
       const worn = { me: null, them: null };
       try {
+        // 决斗场：先记下两人现在的位置（中途断线也能送回去），搭好了再传送上去
+        const dim = `minecraft:${String(bot.game?.dimension ?? 'overworld').replace(/^minecraft:/, '')}`;
+        const spot = (v) => ({ x: Number(v.x.toFixed(2)), y: Number(v.y.toFixed(2)), z: Number(v.z.toFixed(2)), dim });
+        const them = (findPlayer(bot, username)?.entity ?? p.entity).position;
+        this.active.returnTo = { [username]: spot(them), [bot.username]: spot(bot.entity.position) };
+        this.savePending();
+        const { arena, why } = await prepareArena(agent, {
+          mode, fallback: them, back: this.active.returnTo[bot.username], signal: task.signal,
+          onLift: () => agent.say(mode === 'home' ? '我先去家上空把决斗场搭好，马上叫你～' : '我先上去把决斗场搭好，马上叫你～'),
+        });
+        if (arena) {
+          this.active.arena = arena;
+          // 她没离开的话，对手的位置按传送前的最新位置记
+          const now = findPlayer(bot, username)?.entity?.position;
+          if (now) this.active.returnTo[username] = spot(now);
+          this.savePending();
+          const [s1, s2] = arenaSeats(arena);
+          agent.adminCommand(`execute in minecraft:overworld run tp ${username} ${s1.x} ${s1.y} ${s1.z} ${s1.yaw} 0`);
+          agent.adminCommand(`execute in minecraft:overworld run tp ${bot.username} ${s2.x} ${s2.y} ${s2.z} ${s2.yaw} 0`);
+          agent.adminCommand(`effect clear ${bot.username} minecraft:slow_falling`);
+          agent.say(`到决斗场啦：${arena.kind === 'home' ? '家' : '原地'}正上方 y=${arena.y} 的空中平台，四周有看不见的墙，掉不下去～打完拆掉、送你回来`);
+          for (let i = 0; i < 80 && !findPlayer(bot, username)?.entity; i++) await sleep(100, task.signal);
+          await sleep(1000, task.signal);
+        } else {
+          this.active.returnTo = null;
+          this.savePending();
+          if (why) agent.say(`${why}，就在这儿打吧`);
+        }
+        // 默认给对手也穿一套一样的；20 秒内回“不用”才不穿
         const how = stash ? '你身上的东西我先替你保管，打完原样还你' : '装备会放进你背包，你自己穿上，打完收回';
-        const same = await agent.social.ask(username, `${level.name}：${level.summary}。要不要给你也穿一套一样的？${how}（20 秒内回“好”或“不用”）`, { timeoutMs: 20_000 });
+        const same = await agent.social.ask(username, `${level.name}：${level.summary}。也给你穿一套一样的（${how}）；不要的话 20 秒内回“不用”`, { timeoutMs: 20_000 });
         worn.me = await this.wearKit(bot.username, kit, stash);
-        if (same) {
+        if (same !== false) {
           worn.them = await this.wearKit(username, kit, stash).catch((err) => {
             agent.say(`给你换装备没成功：${err.message}`);
             return null;
@@ -148,7 +303,9 @@ export class Duels {
         }
         if (worn.them) await this.takeOffKit(username, worn.them).catch(() => {});
         if (worn.me) await this.takeOffKit(bot.username, worn.me).catch(() => {});
-        this.clearArena();
+        const a = this.active;
+        if (a?.arena) await this.closeArena(a.arena, a.returnTo).catch((err) => log.warn(`拆决斗场出错：${err.message}`));
+        else this.clearArena();
         if (this.active?.locked) agent.adminCommand(`njfu duel off ${username} ${bot.username}`);
         // 没装模组时她可能真的被打倒：算对方赢
         if (this.active?.died && !this.active.recorded) {
@@ -210,16 +367,13 @@ export class Duels {
     }
   }
 
-  // 清场：放下的黑曜石、TNT、蜘蛛网、没收回来的水和岩浆、没炸的末影水晶
-  clearArena() {
+  // 没用决斗场时清场：放下的黑曜石、TNT、蜘蛛网、没收回来的水和岩浆（看一眼还是不是，免得清掉别人的方块）、没炸的末影水晶
+  clearArena(placed = [...(this.active?.placed ?? []), ...(this.active?.fluids ?? [])]) {
     const agent = this.agent;
     const bot = agent.bot;
-    for (const p of this.active?.placed ?? []) {
-      if (/^(obsidian|tnt|cobweb)$/.test(bot.blockAt(p)?.name ?? '')) agent.adminCommand(`setblock ${p.x} ${p.y} ${p.z} air`);
+    for (const p of placed) {
+      if (/^(obsidian|tnt|cobweb|water|lava)$/.test(bot.blockAt(p)?.name ?? '')) agent.adminCommand(`setblock ${p.x} ${p.y} ${p.z} air`);
       agent.adminCommand(`kill @e[type=minecraft:end_crystal,x=${p.x},y=${p.y},z=${p.z},distance=..3]`);
-    }
-    for (const p of this.active?.fluids ?? []) {
-      if (/^(water|lava)$/.test(bot.blockAt(p)?.name ?? '')) agent.adminCommand(`setblock ${p.x} ${p.y} ${p.z} air`);
     }
   }
 

@@ -5,6 +5,7 @@ import { itemKey, modernText } from './ui.js';
 import { snapshot } from './status.js';
 import { combatFlags } from './combatModes.js';
 import { DUEL_LEVELS } from './duelKits.js';
+import { ARENA_OPTIONS, arenaMode } from './duelArena.js';
 import { getLog } from '../log.js';
 
 const log = getLog('界面');
@@ -204,6 +205,17 @@ export const MENU_ACTIONS = {
 // 决斗难度的按钮：duel_<难度 id>（面板模组 /njfu ui duel_hard3 → 当成玩家发了 #决斗 困难Ⅲ）
 for (const l of DUEL_LEVELS) MENU_ACTIONS[`duel_${l.id}`] = { label: l.name, text: `#决斗 ${l.name}`, tip: l.summary };
 
+// 决斗场在哪（改的是设置，只有主人能改）：arena_here / arena_home / arena_off
+const ARENA_TIPS = {
+  here: '在决斗的地方正上方现搭（默认），打完拆掉',
+  home: '传送到家正上方现搭，打完拆掉、送回原处',
+  off: '不搭决斗场，就在原地打',
+};
+for (const [id, name] of Object.entries(ARENA_OPTIONS)) {
+  MENU_ACTIONS[`arena_${id}`] = { label: name, text: `#设置 决斗场 ${name}`, tip: ARENA_TIPS[id], owner: true };
+}
+const arenaName = (agent) => ARENA_OPTIONS[arenaMode(agent.cfg.duel?.arena) ?? 'here'];
+
 const button = (label, action, tooltip, width = 100) => ({ label, ...(tooltip ? { tooltip } : {}), action, width });
 
 // 菜单按钮的动作：装了面板模组 1.0.2+ 用 /njfu ui 转告（点一下就生效）；没装就私聊快捷命令（原版会先弹确认窗口）
@@ -222,16 +234,42 @@ export function duelDialog(agent) {
     body: [message([
       key('选个难度，倒计时后开打（鼠标放在按钮上看装备）'), br(),
       { text: '所有难度锁 1 滴血，谁都不会被打死；装备都是临时的，打完收回', color: 'yellow' }, br(),
-      key('开打前会问你要不要也穿一套一样的'),
+      key('默认给你也穿一套一样的'), br(),
+      key('决斗场：'), { text: arenaName(agent), color: 'aqua' },
+      key(arenaMode(agent.cfg.duel?.arena) === 'off' ? '（就地打）' : '（开打前现搭空中平台，不盖住任何方块，打完拆掉、送回来）'),
     ])],
     actions: [
       menuButton(agent, 'duel_easy'),
       menuButton(agent, 'duel_normal'),
       button('困难 ▸', { type: 'show_dialog', dialog: duelTierDialog(agent, 'hard') }, '钻石套起步，Ⅰ～Ⅵ 一级比一级强'),
       button('作弊 ▸', { type: 'show_dialog', dialog: duelTierDialog(agent, 'cheat') }, '下界合金套起步，Ⅰ～Ⅵ 一级比一级强'),
+      button(`决斗场：${arenaName(agent)} ▸`, { type: 'show_dialog', dialog: arenaDialog(agent) }, '选在哪打：原地上空 / 家上空 / 不用', 204),
     ],
     columns: 2,
     exit_action: { label: '算了', width: 150 },
+    pause: false,
+  };
+}
+
+// 决斗场在哪：原地上空 / 家上空 / 不用（点了改设置，再回到决斗菜单）
+export function arenaDialog(agent) {
+  const current = arenaMode(agent.cfg.duel?.arena) ?? 'here';
+  const lines = Object.entries(ARENA_OPTIONS).flatMap(([id, name]) => [
+    { text: `${id === current ? '● ' : '○ '}${name}  `, color: id === current ? 'green' : 'gray' }, key(ARENA_TIPS[id]), br(),
+  ]);
+  return {
+    type: 'minecraft:multi_action',
+    title: { text: 'PVP 决斗 · 决斗场', color: 'light_purple' },
+    body: [message([
+      key('100×100 的黑曜石平台，y=200 起，四面看不见的墙一直到 y=319、不封顶'), br(),
+      { text: '搭之前把整片地方扫一遍，有任何方块就往上抬，还不行就不搭——绝不盖住你的建筑', color: 'yellow' }, br(),
+      ...lines,
+    ], 360)],
+    actions: Object.keys(ARENA_OPTIONS).map((id) => menuButton(agent, `arena_${id}`)),
+    columns: 3,
+    exit_action: agent.menuButtons
+      ? { label: '返回', width: 150, action: { type: 'run_command', command: '/njfu ui duel_menu' } }
+      : { label: '关闭', width: 150 },
     pause: false,
   };
 }

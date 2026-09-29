@@ -229,13 +229,13 @@ export class Social {
         refused = 0;
       } catch (err) {
         const reason = bedError(err);
-        // 看不见的怪（墙后、地下）也会挡着不让睡：等一会儿再试，一直不行就算了
-        if (/怪物/.test(reason) && ++refused < 12) {
-          await sleep(2500, task.signal);
+        // 看不见的怪（墙后、地下）也会挡着不让睡：等一会儿再试；被怪打退、离床远了：走回去再试；一直不行就算了
+        if (/怪物|太远/.test(reason) && ++refused < 12) {
+          await sleep(/怪物/.test(reason) ? 2500 : 500, task.signal);
           continue;
         }
         if (/不是晚上/.test(reason)) break;
-        agent.say(`睡不了喵：${reason}`);
+        agent.say(`睡不了喵：${reason.replace(/^睡不了：/, '')}`);
         return reason;
       }
     }

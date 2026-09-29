@@ -549,8 +549,10 @@ export function bedError(err) {
   const m = String(err?.message ?? err);
   if (/night|thunder/i.test(m)) return '现在不是晚上也不是雷雨天，睡不了';
   if (/monster/i.test(m)) return '附近有怪物，不能睡';
-  if (/far/i.test(m)) return '离床太远了';
+  if (/far|click/i.test(m)) return '离床太远了，够不着';
   if (/occupied/i.test(m)) return '床上已经有人了';
+  if (/half bed/i.test(m)) return '床只剩半张';
+  if (/not a bed/i.test(m)) return '那不是床';
   return `睡不了：${m}`;
 }
 
@@ -1321,16 +1323,17 @@ export const ACTIONS = [
   },
   {
     name: 'duel',
-    description: 'PVP 决斗（娱乐切磋）。action=start 接受或发起决斗（difficulty：easy 简单、normal 普通、hard～hard6 困难Ⅰ～Ⅵ、cheat～cheat6 作弊Ⅰ～Ⅵ，装备一级比一级强，都是临时的）；surrender 对方认输；stats 查战绩。所有难度都强制锁 1 滴血，谁都不会被打死。',
+    description: 'PVP 决斗（娱乐切磋）。action=start 接受或发起决斗（difficulty：easy 简单、normal 普通、hard～hard6 困难Ⅰ～Ⅵ、cheat～cheat6 作弊Ⅰ～Ⅵ，装备一级比一级强，都是临时的）；surrender 对方认输；stats 查战绩。所有难度都强制锁 1 滴血，谁都不会被打死。默认在原地正上方现搭空中决斗场（不会盖住任何方块），打完拆掉、送回原处。',
     input_schema: schema({
       action: choice(['start', 'surrender', 'stats'], '操作'),
       player: str('对手的玩家名'),
       difficulty: choice(DUEL_LEVELS.map((l) => l.id), '难度，可不填'),
+      arena: choice(['here', 'home', 'off'], '在哪打：here 原地上空现搭决斗场、home 家上空现搭决斗场、off 不用决斗场就地打；不填按设置（默认原地上空）'),
     }, ['action', 'player']),
-    run: async (agent, { action, player, difficulty }, ctx) => {
+    run: async (agent, { action, player, difficulty, arena }, ctx) => {
       if (action === 'stats') return agent.duels.statsText(String(player));
       if (action === 'surrender') return agent.duels.surrender(String(player)) ? '对方认输了' : '现在没有在和他决斗';
-      return agent.duels.start(String(player), difficulty || 'normal', ctx);
+      return agent.duels.start(String(player), difficulty || 'normal', { ...ctx, arena });
     },
   },
 ];

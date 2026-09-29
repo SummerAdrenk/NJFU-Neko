@@ -141,8 +141,12 @@ check('菜单 按钮都对应快捷命令', Object.values(view.MENU_ACTIONS).eve
 const duelBtn = modMenu.actions.find((a) => a.label === 'PVP 决斗');
 const duelTop = duelBtn?.action.dialog;
 const cheatTier = duelTop?.actions.find((a) => a.label === '作弊 ▸')?.action.dialog;
-check('菜单 决斗两层：简单 普通 困难▸ 作弊▸', duelBtn?.action.type === 'show_dialog' && duelTop.actions.length === 4
+check('菜单 决斗两层：简单 普通 困难▸ 作弊▸，还有决斗场▸', duelBtn?.action.type === 'show_dialog' && duelTop.actions.length === 5
   && duelTop.actions.some((a) => a.action.command === '/njfu ui duel_easy'));
+const arenaPick = duelTop?.actions.find((a) => a.label.startsWith('决斗场：'))?.action.dialog;
+check('菜单 决斗场：原地上空（默认）/ 家上空 / 不用，选完回到决斗菜单',
+  duelTop.actions[4].label === '决斗场：原地上空 ▸' && arenaPick?.actions.map((a) => a.action.command).join() === '/njfu ui arena_here,/njfu ui arena_home,/njfu ui arena_off'
+  && view.MENU_ACTIONS.arena_home.text === '#设置 决斗场 家上空' && arenaPick.exit_action.action?.command === '/njfu ui duel_menu');
 check('菜单 作弊档Ⅰ～Ⅵ', cheatTier?.actions.length === 6 && cheatTier.actions.some((a) => a.action.command === '/njfu ui duel_cheat6')
   && cheatTier.exit_action.action?.command === '/njfu ui duel_menu');
 const kits = await import('../src/bot/duelKits.js');
@@ -272,6 +276,65 @@ check('鞘翅 展开的动作名（新版本 start_fall_flying，不能用 minef
 const enchItem = { get enchants() { return { enchantments: [{ id: registry.enchantmentsByName.sharpness.id, level: 5 }] }; } };
 createBotMod.normalizeEnchants({ registry }, enchItem);
 check('附魔 整理成 mineflayer 能用的列表（带附魔的工具才能挖东西）', Array.isArray(enchItem.enchants) && enchItem.enchants[0].name === 'sharpness' && enchItem.enchants[0].lvl === 5);
+
+const { bedError } = await import('../src/bot/actions.js');
+check('睡觉 mineflayer 的英文报错翻成中文（被打退够不着床时会走回去再试）',
+  bedError(new Error('cant click the bed')) === '离床太远了，够不着' && bedError(new Error("there's only half bed")) === '床只剩半张');
+
+const arenaMod = await import('../src/bot/duelArena.js');
+const arenaAt = { x: 1498, y: 200, z: -25 };
+// 假的世界：只有 blocks 里写了的位置有方块（1 = 石头），别的都是空气
+const blocks = new Map();
+const stateAt = (x, y, z) => blocks.get(`${x},${y},${z}`) ?? 0;
+const fakeArenaBot = {
+  registry: { blocksByName: { air: { defaultState: 0 }, cave_air: { defaultState: 900 }, void_air: { defaultState: 901 } } },
+  game: { dimension: 'overworld' },
+  world: {
+    getColumnAt: (v) => {
+      const [x, z] = [v.x, v.z];
+      return { getBlockStateId: (l) => stateAt(x, l.y, z) };
+    },
+    getBlockStateId: (v) => stateAt(v.x, v.y, v.z),
+  },
+  blockAt: (v) => ({ name: stateAt(v.x, v.y, v.z) ? 'stone' : 'air' }),
+};
+const arenaCmds = [];
+const arenaAgent = { bot: fakeArenaBot, adminCommand: (c) => arenaCmds.push(c.replace(/^execute in minecraft:overworld run /, '')) };
+const fillVolume = (c) => {
+  const n = c.split(' ').slice(1, 7).map(Number);
+  return (Math.abs(n[3] - n[0]) + 1) * (Math.abs(n[4] - n[1]) + 1) * (Math.abs(n[5] - n[2]) + 1);
+};
+check('决斗场 默认原地上空，名字和 #设置 里的选项一致',
+  arenaMod.arenaMode(/^arena = "(.+)"$/m.exec(fs.readFileSync(new URL('../config.example.toml', import.meta.url), 'utf8'))?.[1]) === 'here'
+  && JSON.stringify(Object.values(arenaMod.ARENA_OPTIONS).sort()) === JSON.stringify([...settings.findSetting('决斗场').options].sort()));
+check('决斗场 #决斗 后面的位置词', arenaMod.arenaMode('原地上空') === 'here' && arenaMod.arenaMode('家上空') === 'home' && arenaMod.arenaMode('不用') === 'off' && arenaMod.arenaMode('困难Ⅲ') === null);
+check('决斗场 高度：y=200 起，比脚下高 40 格，有东西挡着每次抬 30 格，最高 289',
+  JSON.stringify(arenaMod.arenaHeights(68)) === '[200,230,260]' && JSON.stringify(arenaMod.arenaHeights(180)) === '[220,250,280]' && arenaMod.arenaHeights(250).length === 0);
+check('决斗场 上面全是空气', (await arenaMod.highestBlock(fakeArenaBot, arenaAt, 200)) === -Infinity);
+blocks.set('1548,250,-25', 1); // 墙的位置上有东西（比如别人的空中建筑）
+blocks.set('1560,290,-25', 1); // 场地外面的不算
+const top1 = await arenaMod.highestBlock(fakeArenaBot, arenaAt, 200);
+blocks.set('1500,275,-20', 1); // 场地正中间更高的地方也有
+const top2 = await arenaMod.highestBlock(fakeArenaBot, arenaAt, 200);
+check('决斗场 搭之前扫一遍：有方块就往上抬，抬不上去就不搭',
+  top1 === 250 && arenaMod.arenaHeights(68).find((h) => h > top1) === 260 && top2 === 275 && arenaMod.arenaHeights(68).find((h) => h > top2) === undefined);
+blocks.clear();
+await arenaMod.buildArena(arenaAgent, arenaAt, { gap: 0, settle: 0 });
+check('决斗场 搭的时候只填空气的位置（replace air），每条 fill 不超过 32768 格',
+  arenaCmds.length > 0 && arenaCmds.every((c) => c.endsWith(' replace air') && fillVolume(c) <= 32768));
+check('决斗场 100×100 地板、屏障墙到 y=319',
+  arenaCmds.includes('fill 1448 200 -75 1547 200 24 obsidian replace air') && arenaCmds.some((c) => c.includes(' 319 ') && c.includes('barrier')));
+arenaCmds.length = 0;
+blocks.set('1500,201,-20', 1).set('1501,203,-20', 1).set('1520,240,0', 1); // 打完留下的东西
+await arenaMod.removeArena(arenaAgent, arenaAt, { gap: 0, settle: 0 });
+check('决斗场 拆：先清掉落物，再清有东西的那几层，最后拆墙和地板',
+  arenaCmds[0].startsWith('kill @e[type=minecraft:item,') && arenaCmds.includes('fill 1448 201 -75 1547 203 24 air') && arenaCmds.includes('fill 1448 240 -75 1547 240 24 air')
+  && !arenaCmds.some((c) => c.includes(' 204 ') && c.startsWith('fill 1448 204')) && arenaCmds[arenaCmds.length - 1] === 'fill 1448 200 -75 1547 200 24 air'
+  && arenaCmds.filter((c) => c.includes(' 319 ') && c.endsWith(' air')).length === 4 && arenaCmds.every((c) => !c.startsWith('fill') || fillVolume(c) <= 32768));
+blocks.clear();
+const seats = arenaMod.arenaSeats(arenaAt);
+check('决斗场 两个座位相距 20 格、面对面，都在场地里',
+  Math.abs(seats[0].z - seats[1].z) === 20 && seats[0].yaw === 0 && seats[1].yaw === 180 && seats.every((st) => arenaMod.inArena(arenaAt, st)) && !arenaMod.inArena(arenaAt, { x: 1498, y: 150, z: -25 }));
 
 // 7. 面板模组通知、OpenAI 兼容接口、打码
 const chatMod = await import('../src/bot/chat.js');

@@ -172,7 +172,11 @@ export class Agent extends EventEmitter {
       return;
     }
     const button = MENU_ACTIONS[what];
-    if (button) this.chat.runQuick(player, button.text);
+    if (!button) return;
+    const done = this.chat.runQuick(player, button.text);
+    if (what.startsWith('arena_') && this.identity.opLevel >= 2 && supportsDialog(this)) {
+      done.then(() => showDialog(this, player, duelDialog(this))).catch(() => {});
+    }
   }
 
   runAction(name, input, ctx) {
@@ -333,7 +337,9 @@ export class Agent extends EventEmitter {
     log.info(`✓ 已进入世界：${where}`);
     this.events.push('connection', { state: 'online', server: this.target?.label, serverVersion: this.target?.serverVersion, position: where });
     this.emit('online');
-    // 上次决斗中途断线了：等命令树、权限都到了，再补上收尾（还背包、解除锁血）
+    // 去搭决斗场时断线、上线时还悬在建筑上限上面：先救下来
+    setTimeout(() => this.duels?.rescueHover(), 1500);
+    // 上次决斗中途断线了：等命令树、权限都到了，再补上收尾（还背包、解除锁血、送回原处、拆决斗场）
     setTimeout(() => this.duels?.recover().catch((err) => log.warn(`决斗收尾没补上：${err.message}`)), 4000);
   }
 

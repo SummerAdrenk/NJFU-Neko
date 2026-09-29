@@ -28,7 +28,7 @@
   - `run_command '{"command":"tp NJFU_Neko 玩家"}'`、`locate kind=structure target=village_plains`
   - `knowledge topic=craft_plan query=iron_pickaxe`、`knowledge topic=wiki query=侦测器`、`knowledge topic=guide query=redstone_repair`
   - `inspect_area x1= y1= z1= x2= y2= z2= filter=redstone`、`build '{"blocks":[{"x":0,"y":64,"z":0,"block":"repeater[facing=north]"}]}'`
-  - `schematic action=list|info|build …`、`emote name=happy target=玩家`、`affection player= change= reason=`、`duel action=start player=…`
+  - `schematic action=list|info|build …`、`emote name=happy target=玩家`、`affection player= change= reason=`、`duel action=start player=…`（决斗场见 src/bot/duelArena.js：默认原地正上方、可设成家正上方或不用；每次开打前现搭 100×100 黑曜石平台、四周屏障墙到 y=319，搭之前扫描确认那一片全是空气，打完拆掉、送回原处）
   - `attack target=zombie count=3`（自动用跳劈、盾牌、船困怪、弓箭等技巧；Boss：ender_dragon、wither 要主人同意）
   - `ride target=玩家名|boat|minecart|horse`、`dismount`、`tame animal=wolf give_to=玩家`、`use_portal kind=nether|end`、`pillar_up height=3`、`use_potion effect=healing`、`goto x= z= fly=true`
   - 建造（`build`、`schematic build`）默认亲手建并自动备料：背包够直接建；箱子里够先问主人；都不够就自己采集合成。主人明确说“用命令建”才加 `mode=command`
