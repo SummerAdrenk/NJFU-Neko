@@ -4,5 +4,6 @@
   "njfu_neko_panel.armor": "Armor %s",
   "njfu_neko_panel.food": "Food %s/20 (when opened)",
   "njfu_neko_panel.read_only": "View only",
-  "njfu_neko_panel.offline": "The catgirl is offline"
+  "njfu_neko_panel.offline": "The catgirl is offline",
+  "njfu_neko_panel.dueling": "Can't open the catgirl's inventory during a duel"
 }

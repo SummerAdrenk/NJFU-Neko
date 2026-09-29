@@ -15,6 +15,8 @@ const NO = /^(不|别|算了|no|nope|n$)/i;
 export const SLEEP_WORDS = /^(一起)?(去)?睡(觉|吧|觉吧|觉去|觉啦)?[了啦]?[喵～~!！。.]*$/;
 // 这些任务期间可以顺手打架；做正事（采集、合成、运输…）时不打断。
 const INTERRUPTIBLE = new Set(['companion', 'follow', 'guard', 'come']);
+// 这些顺手做的事：有怪打人时直接换成去打怪
+const PREEMPTIBLE = new Set(['survey', 'pickup']);
 
 // 能不能睡（和原版一样：晚上 12542～23459 刻，或者雷雨天）
 export function canSleepNow(bot) {
@@ -67,7 +69,7 @@ export class Social {
       agent.assistTarget = target;
       return;
     }
-    if (cur) return;
+    if (cur && !PREEMPTIBLE.has(cur.name)) return;
     agent.tasks.run('defend', desc, async (task) => {
       const won = await fight(agent, target, task.signal, 30_000);
       return won ? `打倒了 ${target.name}` : `${target.name} 跑掉了`;
@@ -298,6 +300,8 @@ export class Social {
     const item = collected.getDroppedItem?.();
     if (!item || !info?.thrower || info.thrower === bot.username || Date.now() - info.at > 60_000) return;
     const agent = this.agent;
+    // 决斗里（和刚打完）捡到的东西是打斗掉的（砍蜘蛛网掉的线等），不算礼物
+    if (agent.duels?.active || agent.duels?.isDueling(info.thrower, 30_000)) return;
     const owner = agent.chat.isOwner(info.thrower);
     const r = agent.affection.change(info.thrower, agent.affection.giftValue(item.name, item.count), `送了 ${item.name}×${item.count}`, { kind: 'gift', owner });
     agent.events.push('bot', { what: 'gift', by: info.thrower, detail: `${item.name}×${item.count}，好感 ${r.applied >= 0 ? '+' : ''}${r.applied} → ${r.score}` });

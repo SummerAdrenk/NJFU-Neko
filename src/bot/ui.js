@@ -1,6 +1,6 @@
 // 聊天栏“小面板”：用 /tellraw 发带颜色、可点击、可悬停提示的多行文字；没有管理员权限时退化成普通私聊。
 //
-// 一行 = 若干段，每段：{ text, color, bold, italic, suggest: '点击后填入聊天框的文字', url, hover: '悬停提示', item: '物品ID' }
+// 一行 = 若干段，每段：{ text, color, bold, italic, suggest: '点击后填入聊天框的文字', run: '点击直接执行的命令', url, hover: '悬停提示', item: '物品ID' }
 
 // 1.21.5 起文本组件的点击/悬停字段改名（click_event / hover_event），之前是 clickEvent / hoverEvent。
 export function modernText(agent) {
@@ -25,6 +25,10 @@ export function toComponent(agent, seg) {
     Object.assign(c, modern
       ? { click_event: { action: 'suggest_command', command: seg.suggest } }
       : { clickEvent: { action: 'suggest_command', value: seg.suggest } });
+  } else if (seg.run) {
+    Object.assign(c, modern
+      ? { click_event: { action: 'run_command', command: seg.run } }
+      : { clickEvent: { action: 'run_command', value: seg.run } });
   } else if (seg.url) {
     Object.assign(c, modern
       ? { click_event: { action: 'open_url', url: seg.url } }

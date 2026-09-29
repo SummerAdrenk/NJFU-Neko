@@ -200,6 +200,7 @@ export const MENU_ACTIONS = {
   pet: { label: '摸摸头', text: '#摸头', tip: '摸摸她的头，好感 +1' },
   hug: { label: '抱抱', text: '#抱抱', tip: '她会跑过来抱你，好感 +1' },
   dance: { label: '跳支舞', text: '#跳舞', tip: '转圈、蹦跳、冒爱心' },
+  surrender: { label: '认输', text: '#认输', tip: '提前结束决斗，算你输' },
 };
 
 // 决斗难度的按钮：duel_<难度 id>（面板模组 /njfu ui duel_hard3 → 当成玩家发了 #决斗 困难Ⅲ）
@@ -234,7 +235,7 @@ export function duelDialog(agent) {
     body: [message([
       key('选个难度，倒计时后开打（鼠标放在按钮上看装备）'), br(),
       { text: '所有难度锁 1 滴血，谁都不会被打死；装备都是临时的，打完收回', color: 'yellow' }, br(),
-      key('默认给你也穿一套一样的'), br(),
+      key('默认给你也穿一套一样的；一局最长 15 分钟（作弊档 30 分钟），屏幕上方有倒计时，随时可以 #认输'), br(),
       key('决斗场：'), { text: arenaName(agent), color: 'aqua' },
       key(arenaMode(agent.cfg.duel?.arena) === 'off' ? '（就地打）' : '（开打前现搭空中平台，不盖住任何方块，打完拆掉、送回来）'),
     ])],

@@ -281,6 +281,30 @@ const { bedError } = await import('../src/bot/actions.js');
 check('睡觉 mineflayer 的英文报错翻成中文（被打退够不着床时会走回去再试）',
   bedError(new Error('cant click the bed')) === '离床太远了，够不着' && bedError(new Error("there's only half bed")) === '床只剩半张');
 
+const duelMod = await import('../src/bot/duel.js');
+check('决斗时长：默认 15 分钟，作弊档 30 分钟',
+  duelMod.duelMinutes(kits.duelLevel('easy'), {}) === 15 && duelMod.duelMinutes(kits.duelLevel('hard6'), {}) === 15
+  && duelMod.duelMinutes(kits.duelLevel('cheat3'), {}) === 30 && duelMod.duelMinutes(kits.duelLevel('normal'), { time_limit_minutes: 5 }) === 5);
+check('决斗倒计时的文字', duelMod.clockText(899) === '14:59' && duelMod.clockText(60) === '1:00' && duelMod.clockText(9) === '0:09');
+const clockCmds = [];
+const clock = new duelMod.DuelClock({ quietCommands: true, adminCommand: (c) => clockCmds.push(c), say: () => {} }, 'Steve', kits.duelLevel('hard5'), 900_000);
+clock.start();
+check('决斗倒计时：屏幕上方的血条只给对手看，总长 900 秒',
+  clockCmds.includes('bossbar set njfu:duel max 900') && clockCmds.includes('bossbar set njfu:duel players Steve')
+  && clockCmds.some((c) => c.startsWith('bossbar set njfu:duel name ') && c.includes('剩余 15:00')));
+clockCmds.length = 0;
+clock.end = Date.now() + 59_500;
+clock.tick();
+check('决斗倒计时：最后 1 分钟变红，屏幕中间提示', clockCmds.includes('bossbar set njfu:duel color red') && clockCmds.some((c) => c.startsWith('title Steve title ') && c.includes('最后 1 分钟')));
+clockCmds.length = 0;
+clock.end = Date.now() + 9_500;
+clock.tick();
+clock.stop();
+check('决斗倒计时：最后 10 秒大字倒数，结束收掉血条', clockCmds.some((c) => c.startsWith('title Steve title ') && c.includes('"text":"10"')) && clockCmds.includes('bossbar remove njfu:duel'));
+const uiMod = await import('../src/bot/ui.js');
+const runBtn = uiMod.toComponent({ target: { serverVersion: '26.2' } }, { text: '[认输]', run: '/njfu ui surrender' });
+check('聊天按钮：点一下直接执行命令（认输）', runBtn.click_event?.action === 'run_command' && runBtn.click_event.command === '/njfu ui surrender' && view.MENU_ACTIONS.surrender?.text === '#认输');
+
 const arenaMod = await import('../src/bot/duelArena.js');
 const arenaAt = { x: 1498, y: 200, z: -25 };
 // 假的世界：只有 blocks 里写了的位置有方块（1 = 石头），别的都是空气

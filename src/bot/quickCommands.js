@@ -47,6 +47,7 @@ const HELP = {
     title('PVP 决斗'),
     [cmd('#决斗', '先选难度'), label('：简单、普通、困难Ⅰ～Ⅵ、作弊Ⅰ～Ⅵ，一级比一级强（鼠标放上去看装备）')],
     [label('倒计时后开打，'), value('强制锁 1 滴血', 'yellow'), label('：打到只剩 1 滴血就停，谁都不会被打死')],
+    [label('一局最长 15 分钟（作弊档 30 分钟），屏幕上方有倒计时，最后 1 分钟提醒；打不过随时 '), cmd('#认输')],
     [label('决斗场：开打前在原地正上方现搭 100×100 的空中黑曜石平台，四周屏障墙到顶；搭之前确认不会盖住任何方块，打完拆掉、送回原处')],
     [label('改成家上空或者不用：'), cmd('#设置 决斗场', '原地上空 / 家上空 / 不用'), label('；只这一局：'), cmd('#决斗 困难Ⅲ 家上空')],
     [label('装备都是临时的，打完收回；默认给你也穿一套一样的（20 秒内回“不用”就不穿）')],
@@ -361,7 +362,7 @@ export function createQuickCommands(agent) {
               [duelPick(duelLevel('easy')), { text: ' ' }, duelPick(duelLevel('normal'))],
               [label('困难 '), ...duelRow('hard')],
               [label('作弊 '), ...duelRow('cheat')],
-              [label('所有难度锁 1 滴血，装备都是临时的，打完收回。'), cmd('#认输'), label(' '), cmd('#战绩')],
+              [label('所有难度锁 1 滴血，装备都是临时的，打完收回；一局最长 15 分钟（作弊 30 分钟）。'), cmd('#认输'), label(' '), cmd('#战绩')],
               [label(`决斗场：${ARENA_OPTIONS[arenaMode(agent.cfg.duel?.arena) ?? 'here']}（`), cmd('#设置 决斗场', '原地上空 / 家上空 / 不用'), label(' 可以改）')],
             ],
           };

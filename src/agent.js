@@ -156,6 +156,8 @@ export class Agent extends EventEmitter {
     const e = findPlayer(this.bot, player)?.entity;
     if (e && Date.now() > (this.lookLockUntil ?? 0)) this.bot.lookAt(e.position.offset(0, e.eyeHeight ?? 1.6, 0)).catch(() => {});
     if (action !== 'menu') return;
+    // 决斗中不弹菜单（面板模组 1.0.5 起连背包也不开，右键照常用手上的东西）
+    if (this.duels?.isDueling(player)) return;
     if (this.identity.opLevel >= 2 && supportsDialog(this)) showMenuDialog(this, player);
     else this.say('我还没有管理员权限，弹不出菜单喵……发 #帮助 看看我能做什么吧', { to: player });
   }

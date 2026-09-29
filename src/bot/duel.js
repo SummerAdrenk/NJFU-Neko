@@ -17,6 +17,7 @@ import { usePotion } from './potions.js';
 import { eatBest } from './survival.js';
 import { DUEL_PENDING_FILE, RUNTIME } from '../paths.js';
 import { getLog } from '../log.js';
+import { sendPanel } from './ui.js';
 import { abortError, sleep } from '../util.js';
 
 const log = getLog('决斗');
@@ -24,6 +25,77 @@ const STATS_FILE = path.join(RUNTIME, 'duels.json');
 const LOCK_HP = 1;
 const WEAPON_DAMAGE = { netherite_sword: 8, diamond_sword: 7, iron_sword: 6, stone_sword: 5, golden_sword: 4, wooden_sword: 4, netherite_axe: 10, diamond_axe: 9, iron_axe: 9, stone_axe: 9, golden_axe: 7, wooden_axe: 7, mace: 6, trident: 9 };
 const sameArena = (a, b) => Boolean(a && b && a.x === b.x && a.y === b.y && a.z === b.z);
+const BAR = 'njfu:duel';
+
+// 一局最长几分钟：作弊档 30、其他 15（config.toml 的 [duel] 里改）
+export function duelMinutes(level, cfg = {}) {
+  return level.group === 'cheat' ? (cfg.cheat_time_limit_minutes ?? 30) : (cfg.time_limit_minutes ?? 15);
+}
+
+// 倒计时的文字 m:ss
+export const clockText = (sec) => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+
+// 屏幕上方的倒计时（boss 血条，给对手看）：每秒更新；最后 1 分钟变红、屏幕中间提示一次，最后 10 秒大字倒数。
+// 没装面板模组时（每条命令都会在管理员聊天栏里留灰字）不用血条和大字，只在聊天里报几次剩余时间
+export class DuelClock {
+  constructor(agent, player, level, limitMs) {
+    this.agent = agent;
+    this.player = player;
+    this.level = level;
+    this.end = Date.now() + limitMs;
+    this.total = Math.round(limitMs / 1000);
+    this.quiet = Boolean(agent.quietCommands);
+    this.shown = null;
+  }
+
+  left() {
+    return Math.max(0, Math.ceil((this.end - Date.now()) / 1000));
+  }
+
+  start() {
+    if (!this.quiet) return;
+    const a = this.agent;
+    a.adminCommand(`bossbar remove ${BAR}`);
+    a.adminCommand(`bossbar add ${BAR} ${JSON.stringify(`PVP 决斗 · ${this.level.name}`)}`);
+    a.adminCommand(`bossbar set ${BAR} max ${this.total}`);
+    a.adminCommand(`bossbar set ${BAR} color yellow`);
+    a.adminCommand(`bossbar set ${BAR} players ${this.player}`);
+    this.tick();
+  }
+
+  // 在决斗循环里随便调，自己按秒节流
+  tick() {
+    const left = this.left();
+    if (left === this.shown) return;
+    this.shown = left;
+    const a = this.agent;
+    if (!this.quiet) {
+      if (left > 0 && (left % 300 === 0 || left === 60 || left === 10)) a.say(`决斗还剩 ${clockText(left)}，打不过可以发 #认输`);
+      return;
+    }
+    const last = left <= 60;
+    a.adminCommand(`bossbar set ${BAR} name ${JSON.stringify(`PVP 决斗 · ${this.level.name} · ${last ? '最后' : '剩余'} ${clockText(left)}`)}`);
+    a.adminCommand(`bossbar set ${BAR} value ${left}`);
+    if (last && !this.red) {
+      this.red = true;
+      a.adminCommand(`bossbar set ${BAR} color red`);
+      a.adminCommand(`title ${this.player} times 5 50 10`);
+      a.adminCommand(`title ${this.player} subtitle ${JSON.stringify({ text: '打不过可以发 #认输', color: 'gray' })}`);
+      a.adminCommand(`title ${this.player} title ${JSON.stringify({ text: '最后 1 分钟！', color: 'red', bold: true })}`);
+    }
+    if (left <= 10 && left > 0) {
+      if (left === 10) {
+        a.adminCommand(`title ${this.player} times 0 25 5`);
+        a.adminCommand(`title ${this.player} subtitle ""`);
+      }
+      a.adminCommand(`title ${this.player} title ${JSON.stringify({ text: String(left), color: 'red', bold: true })}`);
+    }
+  }
+
+  stop() {
+    if (this.quiet) this.agent.adminCommand(`bossbar remove ${BAR}`);
+  }
+}
 
 function readPending() {
   try {
@@ -197,6 +269,7 @@ export class Duels {
     const agent = this.agent;
     const bot = agent.bot;
     if (p.locked) agent.adminCommand(`njfu duel off ${p.player} ${p.bot ?? bot.username}`);
+    agent.adminCommand(`bossbar remove ${BAR}`);
     for (const who of p.stashed ?? []) {
       await agent.chat.capture(async () => bot.chat(`/njfu stash restore ${who}`), 1200).catch(() => {});
     }
@@ -403,8 +476,19 @@ export class Duels {
     }
     await sleep(800, task.signal);
     say('开打喵！');
+    const minutes = duelMinutes(level, cfg);
+    // 打不过随时可以认输：聊天栏里给对手一个按钮（装了面板模组点一下就生效）
+    sendPanel(agent, username, [[
+      { text: '打不过随时可以 ', color: 'gray' },
+      agent.menuButtons
+        ? { text: '[认输]', color: 'red', bold: true, run: '/njfu ui surrender', hover: '点一下认输，结束这局' }
+        : { text: '[认输]', color: 'red', bold: true, suggest: '#认输', hover: '点一下填进聊天框，再按回车' },
+      { text: `（这局最长 ${minutes} 分钟，屏幕上方有倒计时）`, color: 'gray' },
+    ]]);
 
     const started = Date.now();
+    const limitMs = minutes * 60_000;
+    const clock = new DuelClock(agent, username, level, limitMs);
     const fighter = new Fighter(agent, task.signal);
     Object.assign(fighter.flags, { potions: level.potions, golden_apples: level.gapples > 0, totem: level.totems > 0, crits: level.tricks, shield: level.shield });
     const tactics = new DuelTactics(agent, fighter, level, { locked });
@@ -421,37 +505,61 @@ export class Duels {
     const bare = { ...style, bare: true, crit: false, axeBreak: false, lava: false };
     let result = 'draw';
     bot.pathfinder.setMovements(makeMovements(bot));
-    for (;;) {
-      if (task.signal.aborted) throw abortError(task.signal);
-      const e = findPlayer(bot, username)?.entity;
-      if (!e) {
-        result = 'draw';
-        say(`${username} 跑掉了？那这局就算平手吧`);
-        break;
+    clock.start();
+    // 打斗中自动进食别插进来（每次受伤都会去吃，一吃就被打断又重来）：饿了在打斗空当自己吃
+    agent.fighting = (agent.fighting ?? 0) + 1;
+    let lastLock = Date.now();
+    let lastEat = 0;
+    try {
+      for (;;) {
+        if (task.signal.aborted) throw abortError(task.signal);
+        const e = findPlayer(bot, username)?.entity;
+        if (!e) {
+          result = 'draw';
+          say(`${username} 跑掉了？那这局就算平手吧`);
+          break;
+        }
+        if (this.active.surrendered) {
+          result = 'lose_player';
+          say(`${username} 认输啦！嘿嘿，我赢了喵～`);
+          break;
+        }
+        if (down(playerHealth(e), absorption(bot, e))) {
+          result = 'lose_player';
+          say(`胜负已分！${username} 只剩 1 滴血了，我赢啦喵～`);
+          break;
+        }
+        if (down(bot.health, absorption(bot, bot.entity))) {
+          result = 'win_player';
+          say(`呜……我只剩 1 滴血了，${username} 赢了！`);
+          break;
+        }
+        if (Date.now() - started > limitMs) {
+          result = 'draw';
+          say('时间到！这局平手～');
+          break;
+        }
+        clock.tick();
+        // 模组的锁血 10 分钟后自动失效（程序断了也不会一直死不了）：打得久就定时续上
+        if (locked && Date.now() - lastLock > 180_000) {
+          lastLock = Date.now();
+          agent.adminCommand(`njfu duel on ${username} ${bot.username}`);
+        }
+        // 饿了（≤14）又离对手够远（≥7 格）：抓空当吃一口
+        if (bot.food <= 14 && Date.now() - lastEat > 5000 && e.position.distanceTo(bot.entity.position) >= 7) {
+          lastEat = Date.now();
+          if (await eatBest(bot).catch(() => null)) {
+            await equipBestWeapon(bot);
+            continue;
+          }
+        }
+        const finishing = !locked && playerHealth(e) <= maxHit;
+        if (!finishing && await tactics.step(e)) continue;
+        await fighter.pvpStep(e, finishing ? bare : style);
       }
-      if (this.active.surrendered) {
-        result = 'lose_player';
-        say(`${username} 认输啦！嘿嘿，我赢了喵～`);
-        break;
-      }
-      if (down(playerHealth(e), absorption(bot, e))) {
-        result = 'lose_player';
-        say(`胜负已分！${username} 只剩 1 滴血了，我赢啦喵～`);
-        break;
-      }
-      if (down(bot.health, absorption(bot, bot.entity))) {
-        result = 'win_player';
-        say(`呜……我只剩 1 滴血了，${username} 赢了！`);
-        break;
-      }
-      if (Date.now() - started > (cfg.time_limit_seconds ?? 180) * 1000) {
-        result = 'draw';
-        say('时间到！这局平手～');
-        break;
-      }
-      const finishing = !locked && playerHealth(e) <= maxHit;
-      if (!finishing && await tactics.step(e)) continue;
-      await fighter.pvpStep(e, finishing ? bare : style);
+    } finally {
+      agent.fighting -= 1;
+      clock.stop();
     }
     bot.clearControlStates();
     this.active.recorded = true;

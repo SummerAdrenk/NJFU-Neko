@@ -28,6 +28,7 @@ import net.minecraft.world.entity.player.Player;
  *   <li>/njfu ui &lt;动作&gt;：功能菜单的按钮用，谁都能用。panel 打开她的人物面板，其他动作转告猫娘去做。</li>
  *   <li>/njfu duel on|off &lt;玩家&gt;：决斗锁 1 滴血、附近的爆炸不破坏方块（只有猫娘自己能用，见 {@link DuelArena}）。</li>
  *   <li>/njfu stash save|restore &lt;玩家&gt;：决斗前替玩家保管整个背包（存进存档目录），打完原样放回（只有猫娘自己能用）。</li>
+ *   <li>决斗中：右键她不打开背包、Shift+右键也不弹菜单，照常举盾、拉弓、吃东西。</li>
  * </ul>
  */
 public final class NekoPanelMod implements ModInitializer {
@@ -48,6 +49,8 @@ public final class NekoPanelMod implements ModInitializer {
             }
             if (level.isClientSide()) return InteractionResult.SUCCESS;
             if (!(player instanceof ServerPlayer viewer) || !(target instanceof ServerPlayer companion)) return InteractionResult.PASS;
+            // 决斗中：不打开背包、不弹菜单，右键照常用手上的东西（举盾、拉弓、吃东西）
+            if (DuelArena.dueling(viewer) || DuelArena.dueling(companion)) return InteractionResult.PASS;
             if (viewer.isShiftKeyDown()) {
                 notifyCompanion(companion, "menu", viewer);
                 return InteractionResult.SUCCESS;
@@ -117,6 +120,10 @@ public final class NekoPanelMod implements ModInitializer {
             return 0;
         }
         if ("panel".equals(action)) {
+            if (DuelArena.dueling(viewer) || DuelArena.dueling(companion)) {
+                viewer.sendSystemMessage(Component.translatableWithFallback("njfu_neko_panel.dueling", "决斗中不能打开猫娘的背包"));
+                return 0;
+            }
             if (CompanionContainer.inRange(viewer, companion)) {
                 openPanel(viewer, companion);
                 notifyCompanion(companion, "panel", viewer);

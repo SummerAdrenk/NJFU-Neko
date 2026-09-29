@@ -379,13 +379,17 @@ export function installCompanion(agent, bot) {
     busy = true;
     try {
       if (cfg.pickup_items && await pickupNearby()) return;
-      if (cfg.use_chests && Date.now() - lastGear > 60_000) {
+      // 刚打完决斗（被送回原处，身边可能有怪）：1 分钟内先守在身边，不去翻箱子、拿装备、找吃的
+      const afterDuel = Date.now() - (agent.duels?.last?.endedAt ?? 0) < 60_000;
+      if (afterDuel) {
+        // 什么都不做，下面的陪伴照常
+      } else if (cfg.use_chests && Date.now() - lastGear > 60_000) {
         lastGear = Date.now();
         if (await gearUp()) return;
       }
-      if (cfg.auto_eat && await seekFood()) return;
+      if (!afterDuel && cfg.auto_eat && await seekFood()) return;
       // 平时也顺手翻翻附近没看过的箱子（每 3 分钟一轮，一轮最多 8 个），缺东西时知道去哪拿
-      if (cfg.use_chests && cfg.survey_chests !== false && Date.now() - lastSurvey > 180_000) {
+      if (!afterDuel && cfg.use_chests && cfg.survey_chests !== false && Date.now() - lastSurvey > 180_000) {
         lastSurvey = Date.now();
         if (await surveyChests(8)) return;
       }
