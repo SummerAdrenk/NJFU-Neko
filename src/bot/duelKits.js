@@ -110,6 +110,7 @@ export function duelKit(level, { fire = true } = {}) {
   if (level.pearls) hot.push(['ender_pearl', { count: 16 }]);
   if (level.web) hot.push(['cobweb', { count: 16 }]);
   if (level.boom) hot.push(['end_crystal', { count: 64 }], ['obsidian', { count: 64 }], ['tnt', { count: 64 }], ['flint_and_steel', {}]);
+  hot.push(['cooked_beef', { count: 64 }]); // 所有难度都带一组熟牛排，打久了饿了能吃
 
   const inv = [];
   if (level.elytra) inv.push(['elytra', { ench: level.armorEnch ? DURABLE : null }], ['firework_rocket', { count: 64, extra: ['fireworks={flight_duration:3}'] }]);

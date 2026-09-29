@@ -148,7 +148,8 @@ check('菜单 作弊档Ⅰ～Ⅵ', cheatTier?.actions.length === 6 && cheatTier.
 const kits = await import('../src/bot/duelKits.js');
 const kitIds = (id, o) => kits.duelKit(kits.duelLevel(id), o).map((k) => k.id);
 check('决斗 十四档难度', kits.DUEL_LEVELS.length === 14 && kits.DUEL_LEVELS.filter((l) => l.group === 'cheat').length === 6);
-check('决斗 简单：铁套+铁剑', kitIds('easy').join(',') === 'iron_helmet,iron_chestplate,iron_leggings,iron_boots,iron_sword');
+check('决斗 简单：铁套+铁剑+一组熟牛排', kitIds('easy').join(',') === 'iron_helmet,iron_chestplate,iron_leggings,iron_boots,iron_sword,cooked_beef');
+check('决斗 所有难度都带熟牛排', kits.DUEL_LEVELS.every((l) => kitIds(l.id).includes('cooked_beef')));
 check('决斗 普通：加铁斧、盾牌', ['iron_axe', 'shield'].every((i) => kitIds('normal').includes(i)));
 check('决斗 困难：钻石、弓箭、蜘蛛网、鞘翅烟花', ['diamond_sword', 'bow', 'arrow', 'cobweb', 'elytra', 'firework_rocket'].every((i) => kitIds('hard').includes(i)) && !kitIds('hard').includes('ender_pearl'));
 check('决斗 困难Ⅵ：金苹果×64、图腾×3、药水', kits.duelKit(kits.duelLevel('hard6')).some((k) => k.item.startsWith('enchanted_golden_apple[') && k.item.endsWith(' 64'))
