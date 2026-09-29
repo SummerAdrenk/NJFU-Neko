@@ -102,6 +102,10 @@ reconnect = true
 reconnect_delay_seconds = 15
 # 走路时是否允许挖开挡路的方块（false 更安全，不会误拆你的房子）
 dig_while_pathing = false
+# 垫方块：身上有泥土、圆石这类便宜方块时，走路可以搭桥过沟、原地垫高爬上去（会留下几块方块）
+scaffold = true
+# 防摔：从高处掉下来时落地前倒水（下界不行）、用鞘翅滑翔或者放船坐进去，不摔伤
+fall_safety = true
 
 [emotes]
 # 头顶冒爱心、猫叫声等特效（需要管理员权限）
@@ -139,6 +143,10 @@ bow = true
 creeper_melee = true
 # 血量低时吃金苹果（附魔金苹果只在打 Boss 时用）
 golden_apples = true
+# 用药水：血少时喝治疗/再生药水（或对自己扔喷溅药水），着火时喝抗火药水
+potions = true
+# 被围住又打不过时，原地垫方块搭柱子躲上去，在上面打或射箭
+pillar = true
 
 [affection]
 # 好感度系统

@@ -27,6 +27,7 @@ export function createBot(cfg, target) {
   bot.loadPlugin(collectBlockPkg.plugin);
   bot.loadPlugin(pvpPkg.plugin);
   if (cfg.behavior.auto_armor) bot.loadPlugin(armorManager);
+  bot.nekoScaffold = cfg.behavior.scaffold !== false;
   return bot;
 }
 
@@ -34,13 +35,18 @@ export function createBot(cfg, target) {
 // 只影响“走路时顺手挖开挡路方块”，明确要求 dig_block 时不受限制。
 const PROTECTED = /(_planks|_stairs|_slab|_wall|_fence|_fence_gate|_door|_trapdoor|_bed|_carpet|_wool|glass|_concrete|_sign|_banner|bricks|chest|barrel|shulker_box|furnace|smoker|crafting_table|bookshelf|lantern|torch|rail|lever|_button|pressure_plate|redstone_wire|redstone_torch|redstone_block|redstone_lamp|repeater|comparator|hopper|dispenser|dropper|observer|piston|anvil|enchanting_table|brewing_stand|beacon|bell|lectern|loom|stonecutter|grindstone|cartography_table|fletching_table|smithing_table|composter|cauldron|ladder|scaffolding|flower_pot|candle|quartz_block|iron_bars|jukebox|note_block|respawn_anchor|lodestone|beehive|campfire|sea_lantern|_tiles|chiseled_|polished_|smooth_|cut_copper|copper_bulb|crafter|farmland)/;
 
-export function makeMovements(bot, { dig = false } = {}) {
+// 可以随手垫的便宜方块（搭路、往上垫高时用）
+const SCAFFOLD = /^(dirt|coarse_dirt|cobblestone|cobbled_deepslate|netherrack|andesite|diorite|granite|tuff|blackstone|end_stone|stone|deepslate|mud|basalt|calcite)$/;
+
+export function makeMovements(bot, { dig = false, scaffold = bot.nekoScaffold !== false } = {}) {
   const moves = new Movements(bot);
   moves.canDig = dig;
-  moves.allow1by1towers = dig;
   moves.allowParkour = true;
   moves.allowSprinting = true;
-  if (!dig) moves.scafoldingBlocks = [];
+  // 垫方块：身上有泥土、圆石这类便宜方块时，寻路可以搭桥过沟、原地垫高爬上去
+  const blocks = scaffold ? bot.registry.itemsArray.filter((i) => SCAFFOLD.test(i.name)).map((i) => i.id) : [];
+  moves.scafoldingBlocks = blocks;
+  moves.allow1by1towers = blocks.length > 0;
   for (const block of bot.registry.blocksArray) {
     if (PROTECTED.test(block.name)) moves.blocksCantBreak.add(block.id);
   }

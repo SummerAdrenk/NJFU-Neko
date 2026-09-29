@@ -17,7 +17,7 @@ const HELP = {
     [label('面板：'), value('右键我', 'yellow'), label(' 打开我的背包（能拿能放），'), value('Shift+右键', 'yellow'), label(' 打开功能菜单（要装面板模组）；也可以发 '), cmd('#菜单', '弹出功能菜单')],
     [label('快捷：'), cmd('#状态', '我的生命、位置、在做什么'), gap, cmd('#背包', '我背包里的东西'), gap, cmd('#好感', '我对你的好感度'), gap, cmd('#任务', '我正在做的事')],
     [label('　　　'), cmd('#过来', '走到你身边'), gap, cmd('#跟着', '一直跟着你（离远了会传送）'), gap, cmd('#停', '停下手上的事'), gap, cmd('#回家', '回到我的床边')],
-    [label('更多：'), topic('互动'), gap, topic('游戏'), gap, topic('决斗'), gap, topic('战斗'), gap, topic('干活'), gap, topic('红石'), gap, topic('其他')],
+    [label('更多：'), topic('互动'), gap, topic('游戏'), gap, topic('决斗'), gap, topic('战斗'), gap, topic('移动'), gap, topic('干活'), gap, topic('红石'), gap, topic('其他')],
   ],
   互动: [
     title('互动'),
@@ -46,7 +46,17 @@ const HELP = {
     [label('困怪：'), value('打不过的近战怪（卫道士、凋灵骷髅、末影人…）放船困住再打，不打船，打完收船', 'white')],
     [label('专门打法：'), value('苦力怕打了就跑或用弓，恶魂反弹火球，烈焰人用雪球，幻翼等俯冲', 'white')],
     [label('骑乘怪：'), value('蜘蛛骑士、鸡骑士等先打骑手；船和矿车里的怪不打（多半是机器）', 'white')],
+    [label('保命：'), value('血少喝治疗/再生药水、吃金苹果，着火喝抗火药水，被围住就垫方块躲上去', 'white')],
     [label('Boss：'), ask('猫娘去打末影龙'), dot, ask('猫娘打凋灵'), label('（要主人同意）')],
+  ],
+  移动: [
+    title('移动与出行'),
+    [label('垫方块：'), value('身上有泥土、圆石时会自己搭路、垫高；'), ask('猫娘往上垫 5 格')],
+    [label('防摔：'), value('从高处掉下来会落地前倒水、用鞘翅滑翔或放船坐进去')],
+    [label('飞行：'), ask('猫娘飞到 1000,80,-500'), label('（要有鞘翅和烟花）')],
+    [label('传送门：'), ask('猫娘去下界'), dot, value('你穿过传送门时她会跟过来')],
+    [label('坐骑：'), ask('猫娘上我的船'), dot, ask('猫娘坐矿车'), dot, ask('猫娘骑马'), label('（你坐船时她会自己坐上来）')],
+    [label('驯服：'), ask('猫娘驯服一只狼送给我'), dot, ask('猫娘驯服那匹马')],
   ],
   干活: [
     title('干活（直接用中文吩咐我）'),
@@ -55,6 +65,7 @@ const HELP = {
     [label('熔炼：'), ask('猫娘把铁矿烧成铁锭')],
     [label('运送：'), ask('猫娘把钻石运给我'), dot, ask('猫娘把铁锭运到 10,64,5 的箱子')],
     [label('护卫：'), ask('猫娘保护我'), dot, ask('猫娘守在这里'), label('　随时 '), cmd('#停')],
+    [label('建造：'), value('先备料：背包够直接建；箱子里有会先问你要不要拿；都没有就自己采集合成（工作台也自己做）')],
   ],
   红石: [
     title('红石与建造'),
@@ -81,7 +92,7 @@ export function createQuickCommands(agent) {
   const commands = [
     { names: ['帮助', 'help', '?', '？', '说明'], run: (player, args) => ({ panel: HELP[args[0] ?? ''] ?? HELP[''] }) },
     // 直接发分类名也能看对应的说明（#决斗 是开始决斗，说明用 #帮助 决斗）
-    { names: ['互动', '游戏', '小游戏', '战斗', '干活', '红石', '其他'], run: (player, args, name) => ({ panel: HELP[name === '小游戏' ? '游戏' : name] }) },
+    { names: ['互动', '游戏', '小游戏', '战斗', '移动', '干活', '红石', '其他'], run: (player, args, name) => ({ panel: HELP[name === '小游戏' ? '游戏' : name] }) },
     {
       names: ['菜单', 'menu'],
       run: (player) => {

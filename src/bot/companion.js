@@ -6,6 +6,7 @@ import {
 } from './helpers.js';
 import { canEngage, creeperPlan, fight } from './combat.js';
 import { pickFood } from './survival.js';
+import { freeSeat, isPortalNear, mountEntity, usePortal } from './movement.js';
 import { getLog } from '../log.js';
 import { abortError, sleep } from '../util.js';
 
@@ -27,6 +28,7 @@ export async function accompanyLoop(agent, username, task, { minDist = 2, maxDis
   let lastTp = 0;
   let nextHover = Date.now() + 4000;
   let following = null;
+  let lastSeen = null;
   for (;;) {
     if (task.signal.aborted) throw abortError(task.signal);
     const player = findPlayer(bot, username);
@@ -35,6 +37,23 @@ export async function accompanyLoop(agent, username, task, { minDist = 2, maxDis
       throw new Error(`${username} 下线了`);
     }
     const e = player.entity;
+    if (e) lastSeen = { pos: e.position.clone(), t: Date.now() };
+
+    // 0. 坐船 / 坐骑：主人还在同一条船上就一起坐着；主人下去了我也下去。主人坐进有空位的船或骆驼，就一起坐上去
+    if (bot.vehicle) {
+      if (e && e.vehicle === bot.vehicle) {
+        await sleep(500, task.signal);
+        continue;
+      }
+      bot.dismount();
+      await sleep(400, task.signal);
+    } else if (e?.vehicle && freeSeat(e.vehicle) && /(boat|raft)$|^(camel|camel_husk|happy_ghast)$/.test(e.vehicle.name)
+      && e.position.distanceTo(bot.entity.position) < 8) {
+      bot.pathfinder.setGoal(null);
+      following = null;
+      await mountEntity(agent, e.vehicle, task.signal).catch(() => {});
+      continue;
+    }
 
     // 1. 危险处理：苦力怕（有把握就打，没把握就躲），打主人在打的 / 在打主人的怪，打靠近的怪
     const plan = creeperPlan(agent);
@@ -54,6 +73,7 @@ export async function accompanyLoop(agent, username, task, { minDist = 2, maxDis
         if (task.signal.aborted) throw err;
       }
       following = null;
+      await sleep(200, task.signal);
       continue;
     }
 
@@ -68,6 +88,21 @@ export async function accompanyLoop(agent, username, task, { minDist = 2, maxDis
       agent.events.push('bot', { what: 'teleport', detail: `离 ${username} 太远，传送过去` });
       await sleep(1000, task.signal);
       continue;
+    }
+    // 主人刚从传送门那里消失：没有管理员权限传送的话，就跟着走传送门
+    if (!e && lastSeen && Date.now() - lastSeen.t < 20_000 && agent.identity.opLevel < 2) {
+      const kind = isPortalNear(bot, lastSeen.pos, 3);
+      if (kind) {
+        lastSeen = null;
+        following = null;
+        agent.say('等等我，我也过去喵～');
+        try {
+          await usePortal(agent, task.signal, { kind });
+        } catch (err) {
+          if (task.signal.aborted) throw err;
+        }
+        continue;
+      }
     }
     if (!e) {
       lostSince ??= Date.now();

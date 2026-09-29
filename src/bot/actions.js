@@ -9,6 +9,8 @@ import {
   nearestCreeper, nearestThreat, normalizeName, placeNearby, protectedReason, resolveBlockIds, resolveItem, summarizeItems, unknownName, Vec3,
 } from './helpers.js';
 import { canEngage, creeperPlan, fight } from './combat.js';
+import { materialsFor, prepareMaterials } from './supply.js';
+import { elytraTravel, pillarUp, ride, tame, usePortal, usePotion } from './movement.js';
 import { describeStatus } from './status.js';
 import { eatBest } from './survival.js';
 import { accompanyLoop } from './companion.js';
@@ -150,7 +152,14 @@ function collectBlocks(agent, { block, count }, ctx) {
     throw new Error(`挖 ${needsTool.name} 需要合适的工具（${tools.slice(0, 4).join('、')} 之一），背包里没有`);
   }
   if (ids.every((id) => mustCollectManually(bot.registry.blocks[id]?.name ?? ''))) return collectManually(agent, ids, block, want, ctx);
-  return agent.tasks.run('collect', `采集 ${block}×${want}`, async (task) => {
+  return agent.tasks.run('collect', `采集 ${block}×${want}`, (task) => collectCore(agent, ids, block, want, task.signal), taskOpts(ctx));
+}
+
+// 采集的核心步骤（备料时直接调用，不另起任务）。
+export async function collectCore(agent, ids, block, want, signal) {
+  const bot = agent.bot;
+  const task = { signal };
+  {
     let dug = 0;
     const onDig = (b) => {
       if (b && ids.includes(b.type)) dug += 1;
@@ -184,15 +193,20 @@ function collectBlocks(agent, { block, count }, ctx) {
     if (!dug) throw new Error(problem ? `一个也没采到：${problem}` : `附近 64 格内没有能挖到的 ${block}`);
     const note = dug < want ? `（目标 ${want} 个；${problem ?? '附近没有更多了'}）` : '';
     return `采集了 ${dug} 个 ${block}${note}。背包：${summarizeItems(bot.inventory.items(), 12)}`;
-  }, taskOpts(ctx));
+  }
 }
 
 // 农作物、花、火把这类方块：逐个走过去挖，农作物只收成熟的。
 const MATURE_AGE = { wheat: 7, carrots: 7, potatoes: 7, beetroots: 3, nether_wart: 3, cocoa: 2, sweet_berry_bush: 3 };
 
 function collectManually(agent, ids, label, want, ctx) {
+  return agent.tasks.run('collect', `采集 ${label}×${want}`, (task) => collectManuallyCore(agent, ids, label, want, task.signal), taskOpts(ctx));
+}
+
+export async function collectManuallyCore(agent, ids, label, want, signal) {
   const bot = agent.bot;
-  return agent.tasks.run('collect', `采集 ${label}×${want}`, async (task) => {
+  const task = { signal };
+  {
     let got = 0;
     const skipped = new Set();
     bot.pathfinder.setMovements(makeMovements(bot));
@@ -221,7 +235,7 @@ function collectManually(agent, ids, label, want, ctx) {
     }
     if (!got) throw new Error(`附近 48 格内没有${MATURE_AGE[bot.registry.blocks[ids[0]]?.name] ? '成熟的' : ''} ${label}`);
     return `收了 ${got} 个 ${label}。背包：${summarizeItems(bot.inventory.items(), 12)}`;
-  }, taskOpts(ctx));
+  }
 }
 
 function maxCraftTimes(bot, recipe) {
@@ -255,7 +269,14 @@ function craftItem(agent, { item, count }, ctx) {
   const it = resolveItem(bot, item);
   if (!it) throw unknownName(bot, item, 'items');
   const want = intIn(count, 1, 1000, 1);
-  return agent.tasks.run('craft', `合成 ${it.name}×${want}`, async (task) => {
+  return agent.tasks.run('craft', `合成 ${it.name}×${want}`, (task) => craftCore(agent, it, want, task.signal), taskOpts(ctx));
+}
+
+// 合成的核心步骤：需要工作台时，附近没有就把背包里的放下（备料时直接调用）。
+export async function craftCore(agent, it, want, signal) {
+  const bot = agent.bot;
+  const task = { signal };
+  {
     let table = findNearestBlock(bot, ['crafting_table'], 32);
     const tableAvailable = Boolean(table || findItem(bot, 'crafting_table'));
     const recipes = bot.recipesFor(it.id, null, 1, tableAvailable ? true : null);
@@ -269,7 +290,7 @@ function craftItem(agent, { item, count }, ctx) {
     await abortable(bot.craft(recipe, times, recipe.requiresTable ? table : null), task.signal);
     const made = times * per;
     return `合成了 ${made} 个 ${it.name}${made < want ? `（想要 ${want} 个，材料只够这些）` : ''}，背包里现在有 ${countItem(bot, it.name)} 个`;
-  }, taskOpts(ctx));
+  }
 }
 
 const FUELS = [['coal', 8], ['charcoal', 8], ['coal_block', 80], ['blaze_rod', 12], [/_planks$/, 1.5], [/_log$/, 1.5], [/_wood$/, 1.5], ['stick', 0.5], ['bamboo', 0.25]];
@@ -287,9 +308,16 @@ function smeltItem(agent, { item, count }, ctx) {
   const input = findItem(bot, item);
   if (!input) throw new Error(`背包里没有 ${normalizeName(item)}`);
   const n = Math.min(intIn(count, 1, 1000, 1), countItem(bot, input.name));
+  return agent.tasks.run('smelt', `熔炼 ${input.name}×${n}`, (task) => smeltCore(agent, input, n, task.signal), taskOpts(ctx));
+}
+
+// 熔炼的核心步骤（备料时直接调用）。
+export async function smeltCore(agent, input, n, signal) {
+  const bot = agent.bot;
+  const task = { signal };
   const isFood = Boolean(bot.registry.foodsByName?.[input.name]) || /^(beef|porkchop|chicken|mutton|rabbit|cod|salmon|potato|kelp)$/.test(input.name);
   const isOre = /^raw_|_ore$|ancient_debris/.test(input.name);
-  return agent.tasks.run('smelt', `熔炼 ${input.name}×${n}`, async (task) => {
+  {
     const kinds = ['furnace', ...(isFood ? ['smoker'] : []), ...(isOre ? ['blast_furnace'] : [])];
     let block = findNearestBlock(bot, kinds, 32);
     if (!block) {
@@ -337,7 +365,7 @@ function smeltItem(agent, { item, count }, ctx) {
       furnace.close();
     }
     return got ? `烧好并取出了 ${got} 个 ${outName}` : '没有烧出东西';
-  }, taskOpts(ctx));
+  }
 }
 
 // ── 物品 ────────────────────────────────────────────────────
@@ -455,6 +483,7 @@ function guard(agent, { player }, ctx) {
             if (task.signal.aborted) throw err;
           }
           following = null;
+          await sleep(200, task.signal);
           continue;
         }
         const e = username ? findPlayer(bot, username)?.entity : null;
@@ -668,14 +697,19 @@ async function handToPlayer(agent, username, itemType, count, signal) {
 
 // ── 红石 / 建造 / 原理图 ─────────────────────────────────
 
+// 默认亲手用材料建（先备料）；只有主人明确要求时才用 /setblock 命令建。
 function chooseBuildMode(agent, requested, ctx) {
-  const canCommand = agent.identity.opLevel >= 2 && !commandPermission(agent, 'setblock', ctx);
-  if (requested === 'survival') return 'survival';
-  if (requested === 'command') {
-    if (!canCommand) throw new Error('用命令建造需要管理员权限，并且只替主人执行');
-    return 'command';
-  }
-  return canCommand ? 'command' : 'survival';
+  if (requested !== 'command') return 'survival';
+  if (agent.identity.opLevel < 2 || commandPermission(agent, 'setblock', ctx)) throw new Error('用命令建造需要管理员权限，并且只替主人执行');
+  return 'command';
+}
+
+// 亲手建之前备料：背包够就直接建；不够但箱子里够就问主人；都不够或者主人不让拿，就自己采集合成。
+async function buildWithMaterials(agent, list, how, task, ctx, onProgress) {
+  let prep = '';
+  if (how === 'survival') prep = await prepareMaterials(agent, materialsFor(agent.bot, list), task.signal, ctx);
+  const result = await buildBlocks(agent, list, { mode: how, signal: task.signal, onProgress });
+  return prep && prep !== '材料都在背包里' ? `${prep}；${result}` : result;
 }
 
 function buildAction(agent, { blocks, mode }, ctx) {
@@ -690,11 +724,10 @@ function buildAction(agent, { blocks, mode }, ctx) {
   });
   const how = chooseBuildMode(agent, mode, ctx);
   return agent.tasks.run('build', `建造 ${list.length} 个方块（${how === 'command' ? '命令精确放置' : '亲手放置'}）`,
-    (task) => agent.withQuietCommands(how === 'command' && list.length > 3, () => buildBlocks(agent, list, { mode: how, signal: task.signal })),
-    taskOpts(ctx));
+    (task) => buildWithMaterials(agent, list, how, task, ctx), taskOpts(ctx));
 }
 
-async function schematicAction(agent, { action, name, x, y, z }, ctx) {
+async function schematicAction(agent, { action, name, x, y, z, mode }, ctx) {
   const dir = agent.cfg.mods.litematica_schematics;
   if (!dir) throw new Error('没有配置投影原理图文件夹（config.toml 的 mods.litematica_schematics）');
   if (action === 'list') {
@@ -709,18 +742,15 @@ async function schematicAction(agent, { action, name, x, y, z }, ctx) {
   const info = describeSchematic(schem);
   if (action === 'info') return info.text;
   if (x == null || y == null || z == null) throw new Error('建造需要坐标 x、y、z（原理图的原点放在哪里）');
-  chooseBuildMode(agent, 'command', ctx);
+  const how = chooseBuildMode(agent, mode, ctx);
   const limit = Number(agent.cfg.mods.max_schematic_blocks ?? 20000);
   if (info.total > limit) throw new Error(`原理图有 ${info.total} 个方块，超过上限 ${limit}（可在 config.toml 的 mods.max_schematic_blocks 调整）`);
   const origin = new Vec3(num(x, 'x'), num(y, 'y'), num(z, 'z')).floored();
   const list = [];
   forEachBlock(schem, (p, spec) => list.push({ pos: origin.plus(p), spec }));
-  return agent.tasks.run('schematic', `建造原理图「${found.name}」（${list.length} 个方块）`, (task) => agent.withQuietCommands(true,
-    () => buildBlocks(agent, list, {
-      mode: 'command',
-      signal: task.signal,
-      onProgress: (done, total) => agent.events.push('bot', { what: 'progress', detail: `原理图「${found.name}」${done}/${total}` }),
-    })), taskOpts(ctx));
+  return agent.tasks.run('schematic', `建造原理图「${found.name}」（${list.length} 个方块，${how === 'command' ? '命令' : '亲手'}）`,
+    (task) => buildWithMaterials(agent, list, how, task, ctx,
+      (done, total) => agent.events.push('bot', { what: 'progress', detail: `原理图「${found.name}」${done}/${total}` })), taskOpts(ctx));
 }
 
 // ── 查找结构 / 群系（/locate + Chunkbase 链接）──────────
@@ -943,17 +973,26 @@ export const ACTIONS = [
   },
   {
     name: 'goto',
-    description: '走到指定坐标（长任务）。不知道高度时可以不填 y。很远的地方走路很慢，主人同意的话可以用 run_command 传送。',
-    input_schema: schema({ x: numType('X 坐标'), y: numType('Y 坐标（高度），可不填'), z: numType('Z 坐标') }, ['x', 'z']),
+    description: '走到指定坐标（长任务）。不知道高度时可以不填 y。身上有便宜方块时会自己垫方块搭路、爬高。fly=true 且有鞘翅和烟花时飞过去（很远时推荐）。很远的地方主人同意的话也可以用 run_command 传送。',
+    input_schema: schema({ x: numType('X 坐标'), y: numType('Y 坐标（高度），可不填'), z: numType('Z 坐标'), fly: { type: 'boolean', description: '用鞘翅飞，可不填' } }, ['x', 'z']),
     run: (agent, input, ctx) => {
       const x = num(input.x, 'x');
       const z = num(input.z, 'z');
       const y = input.y == null || input.y === '' ? null : num(input.y, 'y');
       const goal = y == null ? new goals.GoalXZ(x, z) : new goals.GoalNear(x, y, z, 1);
       const label = y == null ? `(${Math.floor(x)}, ?, ${Math.floor(z)})` : fmtPos({ x, y, z });
-      return agent.tasks.run('goto', `前往 ${label}`, async (task) => {
+      return agent.tasks.run('goto', `前往 ${label}${input.fly ? '（飞过去）' : ''}`, async (task) => {
+        let note = '';
+        if (input.fly) {
+          try {
+            note = `${await elytraTravel(agent, { x, z }, task.signal)}，`;
+          } catch (err) {
+            if (task.signal.aborted) throw err;
+            note = `飞不了（${err.message}），改成走路，`;
+          }
+        }
         await gotoGoal(agent, goal, { signal: task.signal, timeoutMs: 600_000 });
-        return `到达 ${fmtPos(agent.bot.entity.position)}`;
+        return `${note}到达 ${fmtPos(agent.bot.entity.position)}`;
       }, taskOpts(ctx));
     },
   },
@@ -1034,6 +1073,52 @@ export const ACTIONS = [
     run: (agent, input, ctx) => guard(agent, input, ctx),
   },
   {
+    name: 'ride',
+    description: '坐船、坐矿车、骑马等（长任务）。target 填玩家名：坐到他坐的船/骆驼上（和他一起走）；填 boat、minecart、horse、camel、pig、strider、happy_ghast 等：坐最近的空着的那个。没驯服的马会把人甩下来，骑猪、炽足兽要先装鞍。',
+    input_schema: schema({ target: str('玩家名，或 boat / minecart / horse / camel 等') }),
+    run: (agent, input, ctx) => agent.tasks.run('ride', `乘坐 ${input.target}`, (task) => ride(agent, input, task.signal), taskOpts(ctx, 5000)),
+  },
+  {
+    name: 'dismount',
+    description: '从船、矿车、坐骑上下来。',
+    input_schema: schema({}),
+    run: async (agent) => {
+      if (!agent.bot.vehicle) return '我没有坐在什么上面';
+      agent.bot.dismount();
+      return '下来了';
+    },
+  },
+  {
+    name: 'tame',
+    description: '驯服动物（长任务）：狼（骨头）、猫和豹猫（生鳕鱼/生鲑鱼）、鹦鹉（种子）、马/驴/骡/羊驼（反复骑上去）。give_to 填玩家名时，驯服后把主人改成他（需要管理员权限）。',
+    input_schema: schema({ animal: choice(['wolf', 'cat', 'ocelot', 'parrot', 'horse', 'donkey', 'mule', 'llama'], '要驯服的动物'), give_to: str('驯服后送给谁（玩家名），可不填') }, ['animal']),
+    run: (agent, input, ctx) => agent.tasks.run('tame', `驯服 ${input.animal}`, (task) => tame(agent, input, task.signal), taskOpts(ctx)),
+  },
+  {
+    name: 'use_portal',
+    description: '走进附近 64 格内的传送门，去另一个维度（长任务）。kind=nether 下界传送门（默认），end 末地传送门。',
+    input_schema: schema({ kind: choice(['nether', 'end'], '传送门种类，可不填') }, []),
+    run: (agent, input, ctx) => agent.tasks.run('portal', '穿越传送门', (task) => usePortal(agent, task.signal, { kind: input.kind ?? 'nether' }), taskOpts(ctx)),
+  },
+  {
+    name: 'pillar_up',
+    description: '垫方块：原地往上搭几格柱子（用身上的泥土、圆石等便宜方块），躲怪物、上高处都能用。',
+    input_schema: schema({ height: int('搭几格（1～20）') }),
+    run: (agent, input, ctx) => agent.tasks.run('pillar', `垫方块往上 ${input.height} 格`, async (task) => {
+      const n = await pillarUp(agent, intIn(input.height, 1, 20, 3), task.signal);
+      return n ? `往上垫了 ${n} 格` : '垫不了（身上没有泥土、圆石这类方块，或者头顶有东西挡着）';
+    }, taskOpts(ctx)),
+  },
+  {
+    name: 'use_potion',
+    description: '喝药水或对自己扔喷溅药水。effect 填效果：healing 治疗、regeneration 再生、fire_resistance 抗火、strength 力量、swiftness 速度、night_vision 夜视、water_breathing 水下呼吸、slow_falling 缓降、invisibility 隐身、leaping 跳跃、turtle_master 神龟。',
+    input_schema: schema({ effect: str('药水效果英文名') }),
+    run: async (agent, { effect }) => {
+      const used = await usePotion(agent, [String(effect).toLowerCase()]);
+      return used ? `用了药水：${used}` : `背包里没有 ${effect} 药水`;
+    },
+  },
+  {
     name: 'inspect_area',
     description: '读取一个长方体区域内所有方块的完整状态（朝向 facing、延迟 delay、是否充能 powered、红石信号强度 power、活塞是否伸出等），用来看懂或排查红石机器。filter=redstone 只列红石相关方块。最多 12000 格。',
     input_schema: schema({
@@ -1048,7 +1133,7 @@ export const ACTIONS = [
   },
   {
     name: 'build',
-    description: '按方块状态建造一组方块（最多 512 个，长任务）。block 的写法和 /setblock 一样，例如 stone、repeater[facing=north,delay=2]、redstone_wall_torch[facing=east]、sticky_piston[facing=up]；红石线写 redstone_wire 会自动计算连接。mode：command 用 /setblock 精确放置（需要管理员权限，只替主人执行）；survival 用背包材料亲手放；auto（默认）有权限就用 command。朝向含义见 knowledge 的 guide redstone_basics。',
+    description: '按方块状态建造一组方块（最多 512 个，长任务）。block 的写法和 /setblock 一样，例如 stone、repeater[facing=north,delay=2]、redstone_wall_torch[facing=east]、sticky_piston[facing=up]；红石线写 redstone_wire 会自动计算连接。默认亲手用材料建，会先备料：背包够就直接建；不够但记得的箱子里够，会先问主人要不要去拿；都不够或主人不让拿，就自己采集、合成（工作台、熔炉、镐子也会自己做）。mode=command 用 /setblock 精确放置，只在主人明确要求“用命令建”时用（需要管理员权限）。朝向含义见 knowledge 的 guide redstone_basics。',
     input_schema: schema({
       blocks: { type: 'array', description: '要放的方块', items: schema({ x: int('X'), y: int('Y'), z: int('Z'), block: str('方块状态，如 repeater[facing=north,delay=2]') }) },
       mode: choice(['auto', 'command', 'survival'], '建造方式，可不填'),
@@ -1108,11 +1193,12 @@ export const ACTIONS = [
   },
   {
     name: 'schematic',
-    description: '使用投影（Litematica）原理图：action=list 列出原理图（name 可填关键词过滤）；info 看尺寸和材料清单；build 把原理图原点放在坐标 (x,y,z) 用命令建出来（需要管理员权限，建之前先和主人确认位置）。',
+    description: '使用投影（Litematica）原理图：action=list 列出原理图（name 可填关键词过滤）；info 看尺寸和材料清单；build 把原理图原点放在坐标 (x,y,z) 建出来（建之前先和主人确认位置）。默认亲手建并自动备料（同 build）；材料太多时建议 mode=command 用命令建（需要管理员权限，主人明确同意才行）。',
     input_schema: schema({
       action: choice(['list', 'info', 'build'], '操作'),
       name: str('原理图名字或关键词'),
       x: int('原点 X（build 时必填）'), y: int('原点 Y'), z: int('原点 Z'),
+      mode: choice(['survival', 'command'], '建造方式：survival 亲手建（默认），command 用命令建'),
     }, ['action']),
     run: (agent, input, ctx) => schematicAction(agent, input, ctx),
   },

@@ -2,8 +2,9 @@
 // 以及苦力怕、恶魂、烈焰人、幻翼、末影人、凋灵骷髅、凋灵、末影龙等的专门打法。
 import { goals, makeMovements } from './createBot.js';
 import {
-  canMelee, equipBestWeapon, fleeFrom, gotoGoal, isHostile, isVehicleItemEntity, LowHealthError, nearestThreat, protectedReason, Vec3,
+  canMelee, equipBestWeapon, fleeFrom, gotoGoal, isAliveEntity, isHostile, isVehicleItemEntity, LowHealthError, nearestThreat, protectedReason, Vec3,
 } from './helpers.js';
+import { pillarUp, usePotion } from './movement.js';
 import { getLog } from '../log.js';
 import { abortError, sleep } from '../util.js';
 
@@ -237,7 +238,7 @@ export function creeperPlan(agent) {
 
 // 自动防御时可以主动去打的：敌对、没被保护，而且有对应的打法。
 export function canEngage(agent, e) {
-  if (!e?.name || !isHostile(e) || protectedReason(agent, e)) return false;
+  if (!e?.name || !isHostile(e) || !isAliveEntity(agent.bot, e) || protectedReason(agent, e)) return false;
   if (e.name === 'creeper') return creeperPlan(agent) !== 'flee';
   if (e.name === 'ghast') return hasBow(agent.bot);
   if (e.name === 'phantom') return true;
@@ -570,17 +571,62 @@ export class Fighter {
     }
   }
 
+  hasEffect(name) {
+    const id = this.bot.registry.effectsByName?.[name]?.id;
+    return id != null && Boolean(this.bot.entity.effects?.[id]);
+  }
+
+  meleeCrowd(radius) {
+    const me = this.bot.entity.position;
+    return Object.values(this.bot.entities).filter((e) => e !== this.bot.entity && canMelee(e) && e.position.distanceTo(me) < radius).length;
+  }
+
+  // 喝药水 / 扔喷溅药水（放下盾牌、停下脚步，用完换回武器）
+  async potion(kinds) {
+    if (this.cfg.potions === false) return false;
+    this.lower();
+    this.manual();
+    this.stopMove();
+    try {
+      const used = await usePotion(this.agent, kinds);
+      if (used) log.info(`用了药水：${used}`);
+      return Boolean(used);
+    } catch {
+      return false;
+    } finally {
+      this.lastSwap = Date.now();
+      await this.ensureWeapon();
+    }
+  }
+
+  // 被围住又打不过：原地垫方块搭柱子躲上去（僵尸之类够不着），在上面接着打或射箭，血回来再下去。
+  async pillar() {
+    if (this.cfg.pillar === false || this.perched) return false;
+    this.lower();
+    this.manual();
+    this.stopMove();
+    const n = await pillarUp(this.agent, 3, this.signal).catch(() => 0);
+    if (n < 2) return false;
+    this.perched = true;
+    this.agent.events.push('bot', { what: 'combat', detail: `被围住了，垫了 ${n} 格方块躲上去` });
+    await this.ensureWeapon();
+    return true;
+  }
+
   async emergency(target) {
     const bot = this.bot;
     if (!['survival', 'adventure'].includes(bot.game?.gameMode)) return;
     const retreatAt = Number(this.agent.cfg.behavior.retreat_health ?? 8);
-    const witherId = bot.registry.effectsByName?.Wither?.id;
-    if (witherId != null && bot.entity.effects?.[witherId] && bot.health <= 12 && await this.consume(/^milk_bucket$/)) return;
-    if (bot.health <= Math.max(retreatAt, 8) && this.cfg.golden_apples !== false) {
-      if (await this.consume(this.boss ? /^(enchanted_)?golden_apple$/ : /^golden_apple$/)) return;
+    const burning = (Number(meta(bot, bot.entity, 'shared_flags') ?? 0) & 1) === 1;
+    if (burning && bot.health <= 14 && !this.hasEffect('FireResistance') && await this.potion(['fire_resistance'])) return;
+    if (this.hasEffect('Wither') && bot.health <= 12 && await this.consume(/^milk_bucket$/)) return;
+    if (bot.health <= Math.max(retreatAt, 8)) {
+      if (await this.potion(['healing', 'regeneration', 'turtle_master'])) return;
+      if (this.cfg.golden_apples !== false && await this.consume(this.boss ? /^(enchanted_)?golden_apple$/ : /^golden_apple$/)) return;
+      if (this.meleeCrowd(4) >= 2 && await this.pillar()) return;
     }
     const limit = this.boss ? Math.min(retreatAt, 5) : retreatAt;
-    if (limit > 0 && bot.health <= limit) {
+    if (limit > 0 && bot.health <= limit && !this.perched) {
       this.lower();
       this.stopMove();
       this.manual();
@@ -785,6 +831,21 @@ export class Fighter {
       if (await this.dodgeCreepers(target)) continue;
       if (t.water && bot.health <= 10 && await this.retreatToWater()) return false;
       const d = flat(bot.entity.position, target.position);
+      if (this.perched) {
+        // 在柱子上：够得着就打，有弓就射，血回来了或者怪少了再下去
+        await this.face(target);
+        if (this.ready() && reachTo(bot, target) <= REACH) {
+          this.hit(target);
+          continue;
+        }
+        if (hasBow(bot) && d > 1.5) {
+          await this.shoot(target);
+          continue;
+        }
+        if (bot.health >= 16 || this.meleeCrowd(5) < 2) this.perched = false;
+        await this.wait(100);
+        continue;
+      }
       const dy = target.position.y - bot.entity.position.y;
       if (d > 32) return false;
       if (d > 5 || Math.abs(dy) > 2.5) {
@@ -1164,6 +1225,7 @@ export async function fight(agent, target, signal, timeoutMs = 45_000, opts = {}
     f.stopMove();
     f.manual();
     if (!signal?.aborted) await f.collectBoats().catch(() => {});
+    await sleep(50);
   }
 }
 

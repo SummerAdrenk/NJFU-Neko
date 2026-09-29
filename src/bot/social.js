@@ -7,7 +7,7 @@ import { runAction } from './actions.js';
 const log = getLog('社交');
 
 // 快速回答（去掉称呼后匹配开头）
-const YES = /^(好|嗯|恩|要|去|睡|可以|行|来|一起|ok|okay|yes|sure|y$)/i;
+const YES = /^(好|嗯|恩|要|去|睡|可以|行|来|一起|拿|用|当然|ok|okay|yes|sure|y$)/i;
 const NO = /^(不|别|算了|no|nope|n$)/i;
 // 这些任务期间可以顺手打架；做正事（采集、合成、运输…）时不打断。
 const INTERRUPTIBLE = new Set(['companion', 'follow', 'guard', 'come']);
@@ -111,13 +111,35 @@ export class Social {
     agent.say(`${owner && agent.cfg.chat.owners.length ? '主人' : name}要睡觉啦？我也去睡吗～（回“好”我就去）`);
   }
 
-  // 聊天里对“要不要一起睡”的回答。返回 true 表示已处理。
+  // 问玩家一个“是/否”问题，等他在聊天里回答。返回 true（同意）/ false（拒绝）/ null（没回答）。
+  ask(player, text, { timeoutMs = 90_000 } = {}) {
+    const agent = this.agent;
+    if (this.pending?.resolve) this.pending.resolve(null);
+    return new Promise((resolve) => {
+      const pending = { kind: 'ask', player, expires: Date.now() + timeoutMs, resolve };
+      this.pending = pending;
+      agent.events.push('bot', { what: 'question', by: player, detail: text });
+      agent.say(text);
+      setTimeout(() => {
+        if (this.pending !== pending) return;
+        this.pending = null;
+        resolve(null);
+      }, timeoutMs);
+    });
+  }
+
+  // 聊天里对猫娘提问的回答（要不要一起睡、要不要去箱子拿材料……）。返回 true 表示已处理。
   handleReply(msg) {
     const p = this.pending;
     if (!p || Date.now() > p.expires || p.player !== msg.from) return false;
     let text = msg.text.trim();
     for (const t of this.agent.cfg.chat.triggers) text = text.split(t).join('');
     text = text.replace(/^[\s,，.。!！~～]+/, '');
+    if (p.kind === 'ask' && (YES.test(text) || NO.test(text))) {
+      this.pending = null;
+      p.resolve(!NO.test(text));
+      return true;
+    }
     if (YES.test(text)) {
       this.pending = null;
       this.goSleep(msg.from).catch((err) => this.agent.say(`睡不了：${err.message}`, { to: msg.kind === 'whisper' ? msg.from : undefined }));

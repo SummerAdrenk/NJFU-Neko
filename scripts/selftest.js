@@ -105,6 +105,12 @@ check('骑乘 蜘蛛骑士照打', !helpers.protectedReason(agent, ent('skeleton
 const rider = ent('skeleton', { id: 9, vehicle: spider });
 spider.passengers = [rider];
 check('骑乘 先打骑手', helpers.preferRider(agent, spider) === rider);
+// 死掉的怪（生命 0，还在播倒地动画）不能再当目标，否则陪伴循环会对着尸体空转卡死进程
+const healthIndex = registry.entitiesByName.zombie.metadataKeys.indexOf('health');
+const deadZombie = ent('zombie', { id: 11, metadata: Object.assign([], { [healthIndex]: 0 }) });
+const liveZombie = ent('zombie', { id: 12, metadata: Object.assign([], { [healthIndex]: 20 }) });
+check('死怪 不算威胁', !helpers.isThreat(agent, deadZombie) && helpers.isThreat(agent, liveZombie));
+check('死怪 不去打', !combat.canEngage({ ...agent, bot: { ...fakeBot, health: 20, inventory: { items: () => [] } } }, deadZombie));
 
 // 5. 面板模组相关：菜单按钮不再用 /trigger，命令会走 /njfu quiet
 const view = await import('../src/bot/inventoryView.js');

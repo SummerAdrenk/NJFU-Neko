@@ -126,8 +126,17 @@ export function protectedReason(agent, entity) {
   return null;
 }
 
-// 可以主动去打的敌对生物：能近战、没被保护。
-export const isThreat = (agent, entity) => canMelee(entity) && !protectedReason(agent, entity);
+// 生物还活着吗（死掉后倒地动画的那一秒里实体还在，但生命已经是 0）
+export function isAliveEntity(bot, entity) {
+  if (!entity || entity.isValid === false) return false;
+  const keys = bot.registry.entitiesByName[entity.name]?.metadataKeys;
+  const i = keys ? keys.indexOf('health') : -1;
+  const h = i >= 0 ? entity.metadata?.[i] : undefined;
+  return typeof h !== 'number' || h > 0;
+}
+
+// 可以主动去打的敌对生物：能近战、没被保护、还活着。
+export const isThreat = (agent, entity) => canMelee(entity) && isAliveEntity(agent.bot, entity) && !protectedReason(agent, entity);
 
 export function nearestThreat(agent, center, radius, test = isThreat) {
   const bot = agent.bot;
@@ -169,7 +178,7 @@ export function nearestCreeper(bot, radius) {
   let best = null;
   let bestDist = radius;
   for (const entity of Object.values(bot.entities)) {
-    if (entity.name !== 'creeper') continue;
+    if (entity.name !== 'creeper' || !isAliveEntity(bot, entity)) continue;
     const d = entity.position.distanceTo(bot.entity.position);
     if (d <= bestDist) {
       best = entity;

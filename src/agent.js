@@ -13,6 +13,7 @@ import { ServerInfo } from './bot/serverInfo.js';
 import { Social } from './bot/social.js';
 import { installCompanion } from './bot/companion.js';
 import { installCombatSense } from './bot/combat.js';
+import { installFallSafety } from './bot/movement.js';
 import { Duels } from './bot/duel.js';
 import { createEmotes, installInteractions } from './bot/emotes.js';
 import { TextureIndex } from './bot/textures.js';
@@ -218,6 +219,7 @@ export class Agent extends EventEmitter {
     installSurvival(this, bot);
     installCompanion(this, bot);
     installCombatSense(this, bot);
+    installFallSafety(this, bot);
     installInteractions(this, bot);
 
     let spawned = false;
