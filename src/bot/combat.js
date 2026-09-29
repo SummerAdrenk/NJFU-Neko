@@ -238,8 +238,24 @@ export function ownerEntity(agent, maxDist = 64) {
     && p.entity.position.distanceTo(bot.entity.position) < maxDist)?.entity ?? null;
 }
 
-// 索敌：从身边和主人身边的怪里挑最该打的。打过人的、被激怒的、苦力怕靠近主人的优先；
-// 正在追人的（手臂举起、拉弓）在战斗模式的范围内都会去打；没在追人的只打靠得很近的。
+// 看不看得见（中间没有方块挡着）
+function canSee(bot, e) {
+  try {
+    const from = eye(bot);
+    const to = e.position.offset(0, (e.height ?? 1.8) * 0.6, 0);
+    const dir = to.minus(from);
+    const dist = dir.norm();
+    if (dist < 1.5) return true;
+    const hit = bot.world.raycast(from, dir.normalize(), dist);
+    return !hit || hit.position.offset(0.5, 0.5, 0.5).distanceTo(from) >= dist - 0.8;
+  } catch {
+    return true;
+  }
+}
+
+// 索敌：从身边和主人身边的怪里挑最该打的。范围随战斗模式（普通 12 / 困难 20 / 极限 28 / 作弊 32 格，#设置 索敌范围 可改）；
+// 打过人的、被激怒的、主人打过射过的至少 32 格；看不见的（墙后、地底下）只处理 6 格内的。
+// 优先级：打过人的 > 被激怒的 > 正在追人的 > 靠近主人的苦力怕 > 远程怪 > 近的。
 export function pickTarget(agent, ownerName = null) {
   const bot = agent.bot;
   const f = combatFlags(agent);
@@ -255,8 +271,9 @@ export function pickTarget(agent, ownerName = null) {
     const angry = provoked(agent, e);
     const hitSomeone = recentlyAttacked(agent, e);
     const aggressive = (Number(meta(bot, e, 'mob_flags') ?? 0) & 4) !== 0;
-    const limit = angry || hitSomeone ? Math.max(f.engage_radius, 24) : aggressive ? f.engage_radius : Math.min(6, f.engage_radius);
+    const limit = angry || hitSomeone ? Math.max(f.engage_radius, 32) : f.engage_radius;
     if (near > limit || Math.abs(e.position.y - me.y) > 16) continue;
+    if (!angry && !hitSomeone && near > 6 && !canSee(bot, e)) continue;
     let score = -near;
     if (hitSomeone) score += 12;
     if (angry) score += 8;

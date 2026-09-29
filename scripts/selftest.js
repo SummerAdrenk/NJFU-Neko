@@ -148,14 +148,17 @@ const ps = ballistics.solveBallistic(new Vec3(0, 65.5, 0), new Vec3(4, 64, 0), b
 check('药水 弹道（出手比视线高 20°）', ps && Math.abs((ps.launch - ps.pitch) - (20 * Math.PI) / 180) < 1e-6);
 const creepyIdx = registry.entitiesByName.enderman.metadataKeys.indexOf('creepy');
 const em = ent('enderman', { id: 21, position: new Vec3(15, 64, 0), metadata: Object.assign([], { [creepyIdx]: true }) });
-const calmZombie = ent('zombie', { id: 22, position: new Vec3(10, 64, 0) });
+const calmZombie = ent('zombie', { id: 22, position: new Vec3(25, 64, 0) });
 const pickAgent = {
   cfg, chat: { isOwner: () => true }, recentAttackers: new Map(), myBoats: new Set(),
   bot: { ...fakeBot, entities: { 21: em, 22: calmZombie }, players: {}, username: 'NJFU_Neko', health: 20, inventory: { items: () => [] } },
 };
 check('索敌 远处发狂的末影人也会去打', combat.pickTarget(pickAgent)?.id === 21);
 pickAgent.bot.entities = { 22: calmZombie };
-check('索敌 没在追人的远处僵尸不去招惹', combat.pickTarget(pickAgent) === null);
+check('索敌 困难模式 20 格外、没在追人的僵尸不去', combat.pickTarget(pickAgent) === null);
+calmZombie.position = new Vec3(15, 64, 0);
+check('索敌 困难模式 20 格内看得见的僵尸会去打', combat.pickTarget(pickAgent)?.id === 22);
+check('索敌 范围可以改', modes.combatFlags({ cfg: { ...cfg, combat: { ...cfg.combat, engage_radius: 40 } } }).engage_radius === 40);
 
 // 6. #设置 与 #需求
 const settings = await import('../src/settings.js');
