@@ -167,6 +167,11 @@ const actionsMod = await import('../src/bot/actions.js');
 const chestBot = { blockAt: () => ({ name: 'chest', getProperties: () => ({ type: 'left', facing: 'north' }) }) };
 check('大箱子 另一半位置', actionsMod.chestPartner(chestBot, new Vec3(0, 64, 0))?.equals(new Vec3(1, 64, 0)));
 
+const flagsIdx = registry.entitiesByName.player.metadataKeys.indexOf('living_entity_flags');
+const blocker = { name: 'player', metadata: Object.assign([], { [flagsIdx]: 3 }), equipment: [{ name: 'diamond_sword' }, { name: 'shield' }] };
+const swinger = { name: 'player', metadata: Object.assign([], { [flagsIdx]: 0 }), equipment: [{ name: 'diamond_sword' }, { name: 'shield' }] };
+check('决斗 看得出对方在举盾', combat.playerBlocking(fakeBot, blocker) && !combat.playerBlocking(fakeBot, swinger));
+
 // 6. #设置 与 #需求
 const settings = await import('../src/settings.js');
 const companion = settings.findSetting('陪伴');

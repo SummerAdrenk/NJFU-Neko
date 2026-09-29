@@ -1,9 +1,9 @@
 // PVP 决斗：玩家向猫娘发起对决。默认“切磋”规则——把对方打到只剩几颗心就停手，不会真的打死。
 import fs from 'node:fs';
 import path from 'node:path';
-import { goals, makeMovements } from './createBot.js';
+import { makeMovements } from './createBot.js';
 import { equipBestWeapon, findPlayer } from './helpers.js';
-import { Fighter, reachTo } from './combat.js';
+import { Fighter } from './combat.js';
 import { eatBest } from './survival.js';
 import { RUNTIME } from '../paths.js';
 import { abortError, sleep } from '../util.js';
@@ -11,18 +11,11 @@ import { abortError, sleep } from '../util.js';
 const STATS_FILE = path.join(RUNTIME, 'duels.json');
 const WEAPON_DAMAGE = { netherite_sword: 8, diamond_sword: 7, iron_sword: 6, stone_sword: 5, golden_sword: 4, wooden_sword: 4, netherite_axe: 10, diamond_axe: 9, iron_axe: 9, stone_axe: 9, golden_axe: 7, wooden_axe: 7, mace: 6, trident: 9 };
 const LEVELS = {
-  easy: { name: '简单', interval: 1100, strafe: false, crit: false, shield: false, axeBreak: false, reach: 2.6 },
-  normal: { name: '普通', interval: 0, strafe: true, crit: false, shield: true, axeBreak: true, reach: 3.0 },
-  hard: { name: '困难', interval: 0, strafe: true, crit: true, shield: true, axeBreak: true, reach: 3.0 },
+  easy: { name: '简单', interval: 1100, strafe: false, crit: false, shield: false, axeBreak: false, lava: false, reach: 2.6 },
+  normal: { name: '普通', interval: 0, strafe: true, crit: false, shield: true, axeBreak: true, lava: false, reach: 3.0 },
+  hard: { name: '困难', interval: 0, strafe: true, crit: true, shield: true, axeBreak: true, lava: true, reach: 3.0 },
 };
 
-function attackCooldown(item) {
-  if (!item) return 260;
-  if (/_sword$/.test(item.name)) return 640;
-  if (/_axe$/.test(item.name)) return item.name.startsWith('wooden') || item.name.startsWith('stone') ? 1260 : 1000;
-  if (item.name === 'trident') return 910;
-  return 260;
-}
 
 export class Duels {
   constructor(agent) {
@@ -91,13 +84,6 @@ export class Duels {
     const bot = agent.bot;
     const say = (text) => agent.say(text);
     const healthKey = bot.registry.entitiesByName.player?.metadataKeys?.indexOf('health') ?? 9;
-    const flagsKey = bot.registry.entitiesByName.player?.metadataKeys?.indexOf('living_entity_flags') ?? 8;
-    // 对方正在举盾（手在用、用的那只手拿着盾牌）
-    const isBlocking = (p) => {
-      const f = Number(p?.metadata?.[flagsKey] ?? 0);
-      if ((f & 1) !== 1) return false;
-      return ((f & 2) === 2 ? p.equipment?.[1] : p.equipment?.[0])?.name === 'shield';
-    };
     const playerHealth = (e) => Number(e?.metadata?.[healthKey] ?? 20);
     const weapon = await equipBestWeapon(bot);
     await bot.armorManager?.equipAll?.();
@@ -115,9 +101,11 @@ export class Duels {
     const started = Date.now();
     const fighter = new Fighter(agent, task.signal);
     await fighter.equipShield();
-    let nextAttack = 0;
-    let strafeDir = 'left';
-    let nextStrafe = 0;
+    // 和平时打玩家用同一套技巧（战斗模块的 pvpStep），难度决定用哪些；岩浆只在“真打”的决斗里用
+    const style = {
+      reach: level.reach, interval: level.interval, strafe: level.strafe, crit: level.crit, shield: level.shield,
+      axeBreak: level.axeBreak, lava: level.lava && Boolean(cfg.lethal),
+    };
     let result = 'draw';
     bot.pathfinder.setMovements(makeMovements(bot));
     for (;;) {
@@ -148,48 +136,7 @@ export class Duels {
         say('时间到！这局平手～');
         break;
       }
-      const dist = e.position.distanceTo(bot.entity.position);
-      await bot.lookAt(e.position.offset(0, 1.5, 0), true);
-      if (dist > level.reach + 1.5) {
-        bot.clearControlStates();
-        bot.pathfinder.setGoal(new goals.GoalFollow(e, 1.5), true);
-      } else {
-        bot.pathfinder.setGoal(null);
-        bot.setControlState('forward', dist > 2.2);
-        bot.setControlState('back', dist < 1.2);
-        bot.setControlState('sprint', dist > 2.2);
-        if (level.strafe && Date.now() > nextStrafe) {
-          strafeDir = strafeDir === 'left' ? 'right' : 'left';
-          nextStrafe = Date.now() + 500 + Math.random() * 600;
-          bot.setControlState('left', strafeDir === 'left');
-          bot.setControlState('right', strafeDir === 'right');
-        }
-        const interval = level.interval || attackCooldown(bot.heldItem);
-        // 对方举着盾：换斧子砍一下把盾打掉（5 秒用不了盾），再换回剑
-        const axe = level.axeBreak && isBlocking(e) && reachTo(bot, e) <= level.reach ? bot.inventory.items().find((i) => /_axe$/.test(i.name)) : null;
-        if (axe && Date.now() >= nextAttack - 300) {
-          fighter.lower();
-          await bot.equip(axe, 'hand').catch(() => {});
-          await sleep(100, task.signal);
-          fighter.hit(e);
-          say('破盾！');
-          await sleep(150, task.signal);
-          await equipBestWeapon(bot);
-          fighter.lastSwap = Date.now();
-          nextAttack = Date.now() + 400;
-          continue;
-        }
-        if (dist <= level.reach + 0.5 && Date.now() >= nextAttack) {
-          // 困难：跳劈（等到下落时出手才算暴击）；否则普通出手。出手前放下盾牌
-          const crit = level.crit && Math.random() < 0.7 && await fighter.critStrike(e);
-          if (!crit && reachTo(bot, e) <= level.reach) fighter.hit(e);
-          if (crit || reachTo(bot, e) <= level.reach) nextAttack = Date.now() + interval;
-        } else if (level.shield && dist < 4 && nextAttack - Date.now() > 300) {
-          // 等冷却的空档举盾挡对方的攻击（被斧头打掉后会自动等冷却结束）
-          fighter.raise(e.position.offset(0, 1.4, 0));
-        } else fighter.lower();
-      }
-      await sleep(80, task.signal);
+      await fighter.pvpStep(e, style);
     }
     bot.clearControlStates();
 

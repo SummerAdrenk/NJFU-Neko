@@ -461,20 +461,30 @@ function groundUnder(bot, spot) {
   return null;
 }
 
-// 倒岩浆的地方周围 2 格内不能有会烧起来的东西，主人不能在旁边
+const FIRE_IMMUNE = /^(blaze|magma_cube|ghast|strider|wither_skeleton|wither|ender_dragon|zombified_piglin|zoglin|warden)$/;
+
+// 倒岩浆的地方（放下马上收回，只要求紧挨着没有会烧的东西）；主人不能在旁边
 function lavaSafe(agent, pos) {
   const bot = agent.bot;
-  for (let dx = -2; dx <= 2; dx++) {
-    for (let dy = -1; dy <= 2; dy++) {
-      for (let dz = -2; dz <= 2; dz++) {
+  for (let dx = -1; dx <= 1; dx++) {
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dz = -1; dz <= 1; dz++) {
         const b = bot.blockAt(pos.offset(dx, dy, dz));
         if (b && FLAMMABLE.test(b.name)) return false;
       }
     }
   }
   const owner = ownerEntity(agent);
-  if (owner && owner.position.distanceTo(pos) < 6) return false;
-  return bot.entity.position.distanceTo(pos.offset(0.5, 0, 0.5)) >= 2.5;
+  if (owner && owner.position.distanceTo(pos) < 3) return false;
+  return bot.entity.position.distanceTo(pos.offset(0.5, 0, 0.5)) >= 2;
+}
+
+// 对方（玩家）正在举盾：手在用、用的那只手拿着盾牌
+export function playerBlocking(bot, p) {
+  const keys = bot.registry.entitiesByName.player?.metadataKeys ?? [];
+  const f = Number(p?.metadata?.[keys.indexOf('living_entity_flags')] ?? 0);
+  if ((f & 1) !== 1) return false;
+  return ((f & 2) === 2 ? p.equipment?.[1] : p.equipment?.[0])?.name === 'shield';
 }
 
 function waitForBoat(bot, near, ms) {
@@ -529,6 +539,7 @@ export class Fighter {
     this.boatTried = new Set();
     this.boats = new Set();
     this.placedFluids = [];
+    this.nextHitAt = 0;
     this.stats = { hits: 0, crits: 0, sweeps: 0, shots: 0, blocks: 0, potions: 0 };
     agent.myBoats ??= new Set();
   }
@@ -688,15 +699,15 @@ export class Fighter {
     this.stats.hits += 1;
   }
 
-  canCrit() {
+  canCrit(force = false) {
     const e = this.bot.entity;
-    return this.flags.crits && e.onGround && !e.isInWater && !e.isInLava && !this.bot.vehicle;
+    return (force || this.flags.crits) && e.onGround && !e.isInWater && !e.isInLava && !this.bot.vehicle;
   }
 
   // 跳劈：起跳 → 等到开始下落 → 出手。下落中出手 = 暴击（伤害 ×1.5），而且不会横扫误伤旁边的人。
-  async critStrike(target) {
+  async critStrike(target, { force = false } = {}) {
     const bot = this.bot;
-    if (!this.canCrit()) return false;
+    if (!this.canCrit(force)) return false;
     this.lower();
     bot.setControlState('sprint', false); // 疾跑中出手不算暴击
     bot.setControlState('jump', true);
@@ -927,18 +938,20 @@ export class Fighter {
     return true;
   }
 
-  // 岩浆桶烫怪（极限模式）：目标 3～4.3 格远、周围没有会烧的东西、主人不在旁边时，倒在它脚下，然后退开。
-  async lavaStrike(target) {
+  // 岩浆桶点一下（瞬放瞬收）：倒在目标脚下，等 4 刻左右它着了火，马上用空桶收回，岩浆来不及流开。
+  // 平时只在极限/作弊模式用；force（决斗真打、主人让打玩家时）不看模式。不怕火的、已经在烧的不用。
+  async lavaStrike(target, { force = false } = {}) {
     const bot = this.bot;
-    if (!this.flags.lava || Date.now() < (this.nextLava ?? 0) || /^(blaze|magma_cube|ghast|strider|wither|wither_skeleton|ender_dragon)$/.test(target.name)) return false;
+    if ((!this.flags.lava && !force) || Date.now() < (this.nextLava ?? 0) || FIRE_IMMUNE.test(target.name ?? '')) return false;
+    if ((Number(meta(bot, target, 'shared_flags') ?? 0) & 1) === 1) return false;
     const lava = findInv(bot, /^lava_bucket$/);
     if (!lava) return false;
-    const d = bot.entity.position.distanceTo(target.position);
-    if (d < 3 || d > 4.3) return false;
+    const d = flat(bot.entity.position, target.position);
+    if (d < 2.2 || d > 4.3) return false;
     const feet = target.position.floored();
     const ground = bot.blockAt(feet.offset(0, -1, 0));
     if (!solid(ground) || !isEmpty(bot.blockAt(feet)) || !lavaSafe(this.agent, feet)) return false;
-    this.nextLava = Date.now() + 8000;
+    this.nextLava = Date.now() + 6000;
     this.lower();
     this.manual();
     this.stopMove();
@@ -947,12 +960,86 @@ export class Fighter {
     await this.wait(60);
     bot.activateItem();
     bot.deactivateItem();
-    this.placedFluids.push(feet.clone());
-    this.agent.events.push('bot', { what: 'combat', detail: `往 ${target.name} 脚下倒了岩浆` });
-    await this.backOff(target.position, 500);
+    await this.wait(200);
+    // 顺势收回：手里现在是空桶
+    if (bot.blockAt(feet)?.name === 'lava') {
+      await bot.lookAt(new Vec3(feet.x + 0.5, feet.y + 0.5, feet.z + 0.5), true);
+      await this.wait(50);
+      bot.activateItem();
+      bot.deactivateItem();
+      await this.wait(100);
+    }
+    if (bot.blockAt(feet)?.name === 'lava') this.placedFluids.push(feet.clone()); // 没收回来的打完再收
+    this.agent.events.push('bot', { what: 'combat', detail: `岩浆桶点了一下 ${target.username ?? target.name}（放下就收回）` });
     this.lastSwap = Date.now();
     await this.ensureWeapon();
     return true;
+  }
+
+  // ── 打玩家（决斗和平时共用）──
+  // 追身；左右绕着打；冲刺击退（先松一下疾跑再冲，W-tap）或者跳劈；对方举盾就换斧子破盾；
+  // 自己冷却时举盾；岩浆桶点一下就收回。o 覆盖默认做法（决斗按难度传进来）。
+  async pvpStep(target, o = {}) {
+    const bot = this.bot;
+    const lv = { reach: 3.0, interval: 0, strafe: true, crit: this.flags.crits, critChance: 0.7, shield: this.flags.shield, axeBreak: true, lava: this.flags.lava, ...o };
+    const d = flat(bot.entity.position, target.position);
+    await this.face(target, 1.5);
+    if (d > lv.reach + 1.5) {
+      this.lower();
+      this.follow(target, 1.5);
+      await this.wait(80);
+      return;
+    }
+    this.manual();
+    const toward = towardUnit(bot.entity.position, target.position);
+    bot.setControlState('forward', d > 2.2 && safeStep(bot, toward));
+    bot.setControlState('back', d < 1.2 && safeStep(bot, toward.scaled(-1)));
+    bot.setControlState('sprint', d > 2.2);
+    if (lv.strafe && Date.now() > (this.nextStrafe ?? 0)) {
+      this.strafeLeft = !this.strafeLeft;
+      this.nextStrafe = Date.now() + 500 + Math.random() * 600;
+      const side = new Vec3(toward.z, 0, -toward.x).scaled(this.strafeLeft ? 1 : -1);
+      const ok = safeStep(bot, side);
+      bot.setControlState('left', ok && this.strafeLeft);
+      bot.setControlState('right', ok && !this.strafeLeft);
+    }
+    const reach = reachTo(bot, target);
+    const axe = lv.axeBreak && playerBlocking(bot, target) && reach <= lv.reach ? findInv(bot, /_axe$/) : null;
+    if (axe && Date.now() >= this.nextHitAt - 300) {
+      // 换斧子砍一下，对方的盾 5 秒用不了；再换回剑
+      this.lower();
+      await bot.equip(axe, 'hand').catch(() => {});
+      await this.wait(100);
+      this.hit(target);
+      this.agent.events.push('bot', { what: 'combat', detail: `换斧子破了 ${target.username ?? target.name} 的盾` });
+      await this.wait(150);
+      await equipBestWeapon(bot);
+      this.lastSwap = Date.now();
+      this.nextHitAt = Date.now() + 400;
+      return;
+    }
+    if (lv.lava && await this.lavaStrike(target, { force: true })) return;
+    const interval = lv.interval || cooldownMs(bot.heldItem) + 40;
+    if (reach <= lv.reach + 0.5 && Date.now() >= this.nextHitAt && (lv.interval || this.ready())) {
+      const crit = lv.crit && Math.random() < lv.critChance && await this.critStrike(target, { force: true });
+      if (!crit && reachTo(bot, target) <= lv.reach) await this.sprintHit(target);
+      if (crit || reachTo(bot, target) <= lv.reach) this.nextHitAt = Date.now() + interval;
+    } else if (lv.shield && d < 4 && this.nextHitAt - Date.now() > 300) this.raise(target.position.offset(0, 1.4, 0));
+    else this.lower();
+    await this.wait(80);
+  }
+
+  async pvp(target, until) {
+    const bot = this.bot;
+    while (Date.now() < until) {
+      this.check();
+      if (!alive(bot, target)) return true;
+      if (!target.isValid) return false;
+      await this.emergency(target);
+      if (flat(bot.entity.position, target.position) > 64) return false;
+      await this.pvpStep(target);
+    }
+    return !alive(bot, target);
   }
 
   // 打完把插在地上的箭捡回来（骷髅射的捡不起来，走过去也没关系）
@@ -1628,7 +1715,8 @@ export class Fighter {
     if (name === 'ghast') return this.ghast(target, until);
     if (name === 'phantom') return this.phantom(target, until);
     if (name === 'blaze' || name === 'breeze' || name === 'vex') return this.flyer(target, until);
-    const t = TACTICS[target.type === 'player' ? 'player' : name] ?? TACTICS.default;
+    if (target.type === 'player') return this.pvp(target, until);
+    const t = TACTICS[name] ?? TACTICS.default;
     if (this.shouldBoat(target, t) && await this.boatTrap(target)) return this.melee(target, until, t, { trapped: true });
     return this.melee(target, until, t);
   }
