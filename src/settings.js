@@ -34,6 +34,9 @@ export const SETTINGS = [
   { key: '回应所有人', path: 'chat.respond_to_all', type: 'bool', desc: '回应所有人的每一句话' },
   { key: '接话秒数', path: 'chat.follow_up_seconds', type: 'int', min: 0, max: 600, desc: '回复某人后多少秒内他的话也算对她说' },
   { key: '决斗', path: 'duel.enabled', type: 'bool', desc: '允许 PVP 决斗' },
+  // 下面两项用 #战斗模式 修改（切换作弊模式时要发/收临时装备），不在 #设置 里列出
+  { key: '战斗模式', path: 'combat.mode', type: 'choice', options: ['普通', '困难', '极限', '作弊'], desc: '战斗模式', hidden: true },
+  { key: '作弊装备', path: 'combat.cheat_tier', type: 'choice', options: ['下界合金', '钻石'], desc: '作弊模式发哪一套装备', hidden: true },
 ];
 
 const getPath = (obj, p) => p.split('.').reduce((o, k) => o?.[k], obj);
@@ -49,6 +52,10 @@ export const findSetting = (name) => SETTINGS.find((s) => s.key === name || s.pa
 
 export function parseValue(s, raw) {
   const v = String(raw ?? '').trim().toLowerCase();
+  if (s.type === 'choice') {
+    if (!s.options.includes(String(raw).trim())) throw new Error(`「${s.key}」只能是：${s.options.join('、')}`);
+    return String(raw).trim();
+  }
   if (s.type === 'bool') {
     if (['开', '打开', '开启', 'on', 'true', '是', '1', '要'].includes(v)) return true;
     if (['关', '关闭', 'off', 'false', '否', '0', '不要'].includes(v)) return false;

@@ -5,7 +5,7 @@ import {
   countItem, findNearestBlock, findPlayer, fleeFrom, isAliveEntity, nearestCreeper, nearestThreat, protectedReason, summarizeItems,
 } from './helpers.js';
 import { smeltCore, withChest } from './actions.js';
-import { canEngage, creeperPlan, fight, outnumbered, retreatFromCrowd } from './combat.js';
+import { canEngage, creeperPlan, fight, outnumbered, pickTarget, retreatFromCrowd } from './combat.js';
 import { pickFood } from './survival.js';
 import { freeSeat, isPortalNear, mountEntity, usePortal } from './movement.js';
 import { getLog } from '../log.js';
@@ -75,7 +75,7 @@ export async function accompanyLoop(agent, username, task, { minDist = 2, maxDis
     }
     const assist = agent.assistTarget;
     agent.assistTarget = null;
-    const threat = creeper ?? (assist?.isValid && canEngage(agent, assist) ? assist : null) ?? nearestThreat(agent, bot.entity.position, 4, canEngage);
+    const threat = creeper ?? (assist?.isValid && canEngage(agent, assist) ? assist : null) ?? pickTarget(agent, username);
     if (threat) {
       try {
         await fight(agent, threat, task.signal, 30_000);

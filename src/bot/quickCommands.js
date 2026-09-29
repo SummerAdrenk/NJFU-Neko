@@ -7,6 +7,7 @@ import { sendChatInventory, showInventoryDialog, showMenuDialog, supportsDialog 
 import { findSetting, parseValue, resetOverrides, saveOverride, SETTINGS, settingValue } from '../settings.js';
 import { STATUS } from '../requests.js';
 import { loadConfig } from '../config.js';
+import { combatFlags, giveCheatKit, MODE_DESC, MODE_NAMES, normalizeMode, removeCheatKit } from './combatModes.js';
 
 const ask = (text) => ({ text, color: 'white', suggest: text, hover: '点击填入聊天框，改一改再发送' });
 const topic = (name) => ({ text: `[${name}]`, color: 'gold', suggest: name === '决斗' ? '#帮助 决斗' : `#${name}`, hover: `查看「${name}」的说明` });
@@ -49,7 +50,9 @@ const HELP = {
     [label('困怪：'), value('打不过的近战怪（卫道士、凋灵骷髅、末影人…）放船困住再打，不打船，打完收船', 'white')],
     [label('专门打法：'), value('苦力怕打了就跑或用弓，恶魂反弹火球，烈焰人用雪球，幻翼等俯冲', 'white')],
     [label('骑乘怪：'), value('蜘蛛骑士、鸡骑士等先打骑手；船和矿车里的怪不打（多半是机器）', 'white')],
-    [label('保命：'), value('血少喝治疗/再生药水、吃金苹果，着火喝抗火药水，被围住就垫方块躲上去', 'white')],
+    [label('保命：'), value('血少喝药水、吃金苹果、图腾换到副手，打斗间隙吃东西，着火倒水，被围住就冲水、垫高或撤', 'white')],
+    [label('药水：'), value('给自己喝，给你扔治疗/再生（你血少时），往怪堆砸伤害药水（亡灵用治疗药水）', 'white')],
+    [label('模式：'), cmd('#战斗模式', '普通 / 困难 / 极限 / 作弊（临时顶级装备）'), label('（点一下查看现在的模式和说明）')],
     [label('Boss：'), ask('猫娘去打末影龙'), dot, ask('猫娘打凋灵'), label('（要主人同意）')],
   ],
   移动: [
@@ -255,6 +258,45 @@ export function createQuickCommands(agent) {
         return [`收到～需求 #${r.id} 记下来了：${r.text.slice(0, 40)}。${how}`];
       },
     },
+    // 战斗模式：普通 / 困难 / 极限 / 作弊（临时发顶级附魔装备，切回来时收回）
+    {
+      names: ['战斗模式', 'combat', 'mode'],
+      owner: true,
+      run: async (player, args) => {
+        const now = combatFlags(agent).mode;
+        if (!args.length) {
+          return {
+            panel: [
+              title(`战斗模式（现在：${now}）`),
+              ...MODE_NAMES.map((m) => [cmd(`#战斗模式 ${m}`, MODE_DESC[m]), label(`  ${MODE_DESC[m]}`)]),
+              [label('作弊模式可以加：'), cmd('#战斗模式 作弊 钻石', '钻石套（默认下界合金套）'), label('  '), cmd('#战斗模式 作弊 下界合金 图腾3 金苹果6 鞘翅', '自己定数量，加鞘翅和烟花')],
+            ],
+          };
+        }
+        const mode = normalizeMode(args[0]);
+        if (!mode) return [`模式只有：${MODE_NAMES.join('、')}`];
+        const c = agent.cfg.combat;
+        const opt = (re, def) => {
+          const hit = args.map((a) => re.exec(a)).find(Boolean);
+          return hit ? Number(hit[1]) : def;
+        };
+        const tier = args.includes('钻石') ? '钻石' : args.includes('下界合金') ? '下界合金' : (c.cheat_tier ?? '下界合金');
+        if (now === '作弊' && mode !== '作弊') await removeCheatKit(agent);
+        saveOverride(agent.cfg, findSetting('战斗模式'), mode);
+        agent.events.push('bot', { what: 'setting', by: player.name, detail: `战斗模式 → ${mode}` });
+        if (mode !== '作弊') return [`战斗模式改成「${mode}」了：${MODE_DESC[mode]}${now === '作弊' ? '。临时装备已经收回，换回我自己的装备了' : ''}`];
+        saveOverride(agent.cfg, findSetting('作弊装备'), tier);
+        if (now === '作弊') await removeCheatKit(agent);
+        const n = await giveCheatKit(agent, {
+          tier,
+          totems: args.includes('不要图腾') ? 0 : opt(/^图腾(\d+)$/, Number(c.cheat_totems ?? 2)),
+          gapples: args.includes('不要金苹果') ? 0 : opt(/^金苹果(\d+)$/, Number(c.cheat_gapples ?? 4)),
+          potions: !args.includes('不要药水') && c.cheat_potions !== false,
+          elytra: args.includes('鞘翅') || c.cheat_elytra === true,
+        });
+        return [`切换到作弊模式：拿到 ${n} 样临时的顶级附魔装备（${tier}套），切回别的模式时会收回来喵`];
+      },
+    },
     // 游戏里直接改设置（只开放不影响安全的行为开关）
     {
       names: ['设置', 'set', 'settings'],
@@ -263,7 +305,7 @@ export function createQuickCommands(agent) {
         const show = (s, v) => (s.type === 'bool' ? (v ? '开' : '关') : String(v));
         if (!args.length) {
           const lines = [title('设置（点一下填入聊天框，后面写 开 / 关 或数字）')];
-          const cells = SETTINGS.map((s) => {
+          const cells = SETTINGS.filter((s) => !s.hidden).map((s) => {
             const v = settingValue(agent.cfg, s);
             return [cmd(`#设置 ${s.key}`, s.desc), label(' '), value(show(s, v), s.type === 'bool' ? (v ? 'green' : 'red') : 'aqua')];
           });

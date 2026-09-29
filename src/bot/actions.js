@@ -5,12 +5,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { goals, makeMovements } from './createBot.js';
 import {
-  countItem, describeError, findItem, findNearestBlock, findPlayer, fleeFrom, gotoGoal, gotoNear,
+  countItem, describeError, equipBestWeapon, findItem, findNearestBlock, findPlayer, fleeFrom, gotoGoal, gotoNear,
   nearestCreeper, nearestThreat, normalizeName, placeNearby, protectedReason, resolveBlockIds, resolveItem, summarizeItems, unknownName, Vec3,
 } from './helpers.js';
-import { canEngage, creeperPlan, fight } from './combat.js';
+import { canEngage, creeperPlan, fight, pickTarget } from './combat.js';
 import { materialsFor, prepareMaterials } from './supply.js';
-import { elytraTravel, pillarUp, ride, tame, usePortal, usePotion } from './movement.js';
+import { elytraTravel, pillarUp, ride, tame, usePortal } from './movement.js';
+import { ALLY_KINDS, listPotions, offensiveKindsFor, throwPotionAt, usePotion } from './potions.js';
 import { describeStatus } from './status.js';
 import { eatBest } from './survival.js';
 import { accompanyLoop } from './companion.js';
@@ -475,7 +476,8 @@ function guard(agent, { player }, ctx) {
       if (center) {
         const assist = agent.assistTarget;
         agent.assistTarget = null;
-        const mob = creeper ?? (assist?.isValid && canEngage(agent, assist) ? assist : null) ?? nearestThreat(agent, center, 16, canEngage);
+        const mob = creeper ?? (assist?.isValid && canEngage(agent, assist) ? assist : null) ?? pickTarget(agent, username)
+          ?? nearestThreat(agent, center, 16, canEngage);
         if (mob) {
           try {
             await fight(agent, mob, task.signal, 30_000);
@@ -1111,11 +1113,33 @@ export const ACTIONS = [
   },
   {
     name: 'use_potion',
-    description: '喝药水或对自己扔喷溅药水。effect 填效果：healing 治疗、regeneration 再生、fire_resistance 抗火、strength 力量、swiftness 速度、night_vision 夜视、water_breathing 水下呼吸、slow_falling 缓降、invisibility 隐身、leaping 跳跃、turtle_master 神龟。',
-    input_schema: schema({ effect: str('药水效果英文名') }),
-    run: async (agent, { effect }) => {
-      const used = await usePotion(agent, [String(effect).toLowerCase()]);
-      return used ? `用了药水：${used}` : `背包里没有 ${effect} 药水`;
+    description: '用药水。target 不填或填 self：给自己喝（或对脚下扔喷溅药水）；填玩家名：往他身上扔喷溅药水（治疗、再生、抗火、力量、速度等，药水扔不远，要在 6 格以内）；填生物 ID（如 zombie）：往最近的那只扔伤害类药水（亡灵会自动改用治疗药水，因为治疗伤害亡灵）。effect 填效果：healing 治疗、regeneration 再生、fire_resistance 抗火、strength 力量、swiftness 速度、night_vision 夜视、water_breathing 水下呼吸、slow_falling 缓降、invisibility 隐身、leaping 跳跃、turtle_master 神龟、harming 伤害、poison 中毒、weakness 虚弱、slowness 缓慢；对怪物时可以不填。',
+    input_schema: schema({ effect: str('药水效果英文名；对怪物时可不填'), target: str('self / 玩家名 / 生物 ID，可不填') }, []),
+    run: async (agent, { effect, target }) => {
+      const bot = agent.bot;
+      const kinds = effect ? [String(effect).toLowerCase()] : null;
+      if (!target || target === 'self') {
+        const used = await usePotion(agent, kinds ?? ['healing', 'regeneration']);
+        return used ? `用了药水：${used}` : `背包里没有 ${effect ?? '治疗/再生'} 药水`;
+      }
+      const player = findPlayer(bot, target);
+      const entity = player?.entity ?? Object.values(bot.entities).filter((e) => e.name === normalizeName(target) && e.position.distanceTo(bot.entity.position) < 10)
+        .sort((a, b) => a.position.distanceTo(bot.entity.position) - b.position.distanceTo(bot.entity.position))[0];
+      if (!entity) throw new Error(`附近看不到 ${target}`);
+      const list = kinds ?? (player ? ALLY_KINDS : offensiveKindsFor(entity));
+      const used = await throwPotionAt(agent, entity, list);
+      if (!used) throw new Error(`扔不了：背包里没有能扔的 ${list.join('/')} 药水（要喷溅或滞留药水），或者离得太远（药水只能扔 6 格左右）`);
+      await equipBestWeapon(bot);
+      return `往 ${target} 扔了 ${used} 药水`;
+    },
+  },
+  {
+    name: 'list_potions',
+    description: '看看背包里有哪些药水（喷溅、滞留、普通各多少）。',
+    input_schema: schema({}),
+    run: async (agent) => {
+      const all = listPotions(agent.bot);
+      return Object.keys(all).length ? Object.entries(all).map(([k, v]) => `${k}×${v}`).join('、') : '背包里没有药水';
     },
   },
   {

@@ -111,8 +111,8 @@ const deadZombie = ent('zombie', { id: 11, metadata: Object.assign([], { [health
 const liveZombie = ent('zombie', { id: 12, metadata: Object.assign([], { [healthIndex]: 20 }) });
 check('死怪 不算威胁', !helpers.isThreat(agent, deadZombie) && helpers.isThreat(agent, liveZombie));
 const angryEnderman = ent('enderman', { id: 13 });
-check('中立 平时不打末影人', !combat.canEngage({ ...agent, attackedBy: new Map() }, angryEnderman));
-check('中立 被打了还手', combat.canEngage({ ...agent, attackedBy: new Map([[13, Date.now()]]) }, angryEnderman));
+check('中立 平时不打末影人', !combat.canEngage({ ...agent, recentAttackers: new Map() }, angryEnderman));
+check('中立 被打了还手', combat.canEngage({ ...agent, recentAttackers: new Map([[13, { t: Date.now(), victim: 'self' }]]) }, angryEnderman));
 check('死怪 不去打', !combat.canEngage({ ...agent, bot: { ...fakeBot, health: 20, inventory: { items: () => [] } } }, deadZombie));
 
 // 5. 面板模组相关：菜单按钮不再用 /trigger，命令会走 /njfu quiet
@@ -132,6 +132,30 @@ const fakeAgent = {
 const menu = view.menuDialog(fakeAgent, 'Steve');
 check('菜单 按钮', menu.actions.length >= 10 && !JSON.stringify(menu).includes('/trigger'));
 check('菜单 行动按钮填命令', menu.actions.some((a) => a.action.type === 'suggest_command' && a.action.command === '#过来'));
+
+// 5b. 战斗模式、药水、索敌
+const modes = await import('../src/bot/combatModes.js');
+const potionsMod = await import('../src/bot/potions.js');
+const ballistics = await import('../src/bot/ballistics.js');
+const flagsFor = (mode, extra = {}) => modes.combatFlags({ cfg: { ...cfg, combat: { ...cfg.combat, mode, ...extra } } });
+check('模式 普通不跳劈', !flagsFor('普通').crits && flagsFor('困难').crits);
+check('模式 极限才用岩浆', flagsFor('极限').lava && !flagsFor('困难').lava);
+check('模式 开关能关掉', !flagsFor('极限', { lava: false }).lava);
+check('模式 作弊', flagsFor('作弊').cheat === true && flagsFor('cheat').mode === '作弊');
+check('药水 亡灵用治疗', potionsMod.offensiveKindsFor({ name: 'zombie' }).includes('healing') && !potionsMod.offensiveKindsFor({ name: 'zombie' }).includes('harming'));
+check('药水 普通怪用伤害', potionsMod.offensiveKindsFor({ name: 'spider' }).includes('harming'));
+const ps = ballistics.solveBallistic(new Vec3(0, 65.5, 0), new Vec3(4, 64, 0), ballistics.SPLASH_POTION);
+check('药水 弹道（出手比视线高 20°）', ps && Math.abs((ps.launch - ps.pitch) - (20 * Math.PI) / 180) < 1e-6);
+const creepyIdx = registry.entitiesByName.enderman.metadataKeys.indexOf('creepy');
+const em = ent('enderman', { id: 21, position: new Vec3(15, 64, 0), metadata: Object.assign([], { [creepyIdx]: true }) });
+const calmZombie = ent('zombie', { id: 22, position: new Vec3(10, 64, 0) });
+const pickAgent = {
+  cfg, chat: { isOwner: () => true }, recentAttackers: new Map(), myBoats: new Set(),
+  bot: { ...fakeBot, entities: { 21: em, 22: calmZombie }, players: {}, username: 'NJFU_Neko', health: 20, inventory: { items: () => [] } },
+};
+check('索敌 远处发狂的末影人也会去打', combat.pickTarget(pickAgent)?.id === 21);
+pickAgent.bot.entities = { 22: calmZombie };
+check('索敌 没在追人的远处僵尸不去招惹', combat.pickTarget(pickAgent) === null);
 
 // 6. #设置 与 #需求
 const settings = await import('../src/settings.js');

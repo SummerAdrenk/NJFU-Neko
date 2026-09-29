@@ -1,18 +1,23 @@
-// 战斗技巧：蓄满再出手、跳劈（暴击）、冲刺击退、走位保持距离、盾牌格挡、用船困住打不过的怪、弓箭 / 雪球，
-// 以及苦力怕、恶魂、烈焰人、幻翼、末影人、凋灵骷髅、凋灵、末影龙等的专门打法。
+// 战斗：索敌（被激怒的、正在打人的、主人射过的怪优先，范围随战斗模式变化）、蓄满再出手、跳劈（暴击）、
+// 群怪时横扫和边打边退、冲刺击退、盾牌格挡、不死图腾、战斗间隙吃东西、药水（给自己 / 给主人 / 砸怪）、
+// 用船困住打不过的怪、水桶冲开怪群、岩浆桶烫怪（极限模式）、鞘翅撤离（极限模式）、弓箭 / 雪球，
+// 以及苦力怕（按引信进度出手和撤离）、末影人、恶魂、烈焰人、幻翼、凋灵、末影龙等的专门打法。
 import { goals, makeMovements } from './createBot.js';
 import {
-  canMelee, equipBestWeapon, fleeFrom, gotoGoal, isAliveEntity, isHostile, isVehicleItemEntity, LowHealthError, nearestThreat, protectedReason, Vec3,
+  canMelee, equipBestWeapon, findPlayer, fleeFrom, gotoGoal, isAliveEntity, isEmpty, isHostile, isVehicleItemEntity, LowHealthError,
+  nearestThreat, preferRider, protectedReason, Vec3,
 } from './helpers.js';
-import { pillarUp, usePotion } from './movement.js';
+import { ARROW, SNOWBALL, solveBallistic } from './ballistics.js';
+import { combatFlags } from './combatModes.js';
+import { elytraTravel, pillarUp } from './movement.js';
+import { ALLY_KINDS, offensiveKindsFor, throwPotionAt, usePotion } from './potions.js';
 import { getLog } from '../log.js';
 import { abortError, sleep } from '../util.js';
 
-const log = getLog('战斗');
+export { solveBallistic };
 
+const log = getLog('战斗');
 const REACH = 3.0;
-const ARROW = { speed: 3.0, gravity: 0.05, drag: 0.99, dragFirst: false };
-const SNOWBALL = { speed: 1.5, gravity: 0.03, drag: 0.99, dragFirst: true };
 
 // ── 基础数据 ────────────────────────────────────────────────
 
@@ -22,7 +27,7 @@ export function meta(bot, entity, key) {
   return i >= 0 ? entity.metadata?.[i] : undefined;
 }
 
-// 攻击冷却（毫秒）：蓄满再打伤害最高，也才能暴击。
+// 攻击冷却（毫秒）：蓄满再打伤害最高，也才能暴击和横扫。
 export function cooldownMs(item) {
   const n = item?.name ?? '';
   if (!n) return 250;
@@ -50,6 +55,8 @@ const findInv = (bot, re) => bot.inventory.items().find((i) => re.test(i.name));
 const hasArrows = (bot) => Boolean(findInv(bot, /^(arrow|spectral_arrow|tipped_arrow)$/));
 export const hasBow = (bot) => Boolean(findInv(bot, /^bow$/)) && hasArrows(bot);
 const boatItem = (bot) => findInv(bot, /_(boat|raft)$/);
+const inNether = (bot) => /nether/.test(String(bot.game?.dimension ?? ''));
+const centroid = (list) => list.reduce((acc, e) => acc.plus(e.position), new Vec3(0, 0, 0)).scaled(1 / list.length);
 
 function bbox(e) {
   const w = (e.width ?? 0.6) / 2;
@@ -74,66 +81,6 @@ function towardUnit(from, to) {
   const dz = to.z - from.z;
   const n = Math.hypot(dx, dz) || 1;
   return new Vec3(dx / n, 0, dz / n);
-}
-
-// ── 弹道：算出射中目标需要的角度（箭：先移动再减速再下坠；雪球：先下坠减速再移动）──
-
-export function solveBallistic(from, to, { speed, gravity, drag, dragFirst }, maxTicks = 240) {
-  const dx = to.x - from.x;
-  const dz = to.z - from.z;
-  const dy = to.y - from.y;
-  const horiz = Math.hypot(dx, dz);
-  const yaw = Math.atan2(-dx, -dz);
-  if (horiz < 0.05) return { yaw, pitch: dy >= 0 ? Math.PI / 2 - 0.01 : -Math.PI / 2 + 0.01, ticks: Math.abs(dy) / speed };
-  const heightAt = (pitch) => {
-    let vh = speed * Math.cos(pitch);
-    let vy = speed * Math.sin(pitch);
-    let h = 0;
-    let y = 0;
-    for (let t = 0; t < maxTicks; t++) {
-      if (dragFirst) {
-        vy = (vy - gravity) * drag;
-        vh *= drag;
-      }
-      const nh = h + vh;
-      const ny = y + vy;
-      if (nh >= horiz) {
-        const f = (horiz - h) / vh;
-        return { y: y + (ny - y) * f, ticks: t + f };
-      }
-      h = nh;
-      y = ny;
-      if (!dragFirst) {
-        vh *= drag;
-        vy = vy * drag - gravity;
-      }
-      if (vh < 1e-3) return null;
-    }
-    return null;
-  };
-  // 从低往高扫描角度，找到第一个“正好打到目标高度”的低弹道，再二分细化。
-  let prev = null;
-  for (let deg = -80; deg <= 80; deg += 1) {
-    const p = (deg * Math.PI) / 180;
-    const r = heightAt(p);
-    const err = r ? r.y - dy : null;
-    if (err !== null && prev?.err != null && prev.err < 0 && err >= 0) {
-      let lo = prev.p;
-      let hi = p;
-      let best = r;
-      for (let i = 0; i < 24; i++) {
-        const mid = (lo + hi) / 2;
-        const rm = heightAt(mid);
-        if (rm && rm.y - dy >= 0) {
-          hi = mid;
-          best = rm;
-        } else lo = mid;
-      }
-      return { yaw, pitch: hi, ticks: best.ticks };
-    }
-    prev = { p, err };
-  }
-  return null;
 }
 
 const FLYERS = new Set(['ghast', 'blaze', 'phantom', 'ender_dragon', 'wither', 'vex', 'bee', 'bat', 'breeze', 'allay', 'parrot']);
@@ -217,6 +164,32 @@ export function aimingAtMe(bot, maxDist = 24) {
   return null;
 }
 
+// ── 仇恨记录：谁打了我 / 主人（被激怒的中立生物要还手，打过人的怪优先处理）──
+
+export function noteAttacker(agent, attacker, victim = null) {
+  if (attacker?.id == null) return;
+  agent.recentAttackers ??= new Map();
+  agent.recentAttackers.set(attacker.id, { t: Date.now(), victim });
+  if (agent.recentAttackers.size > 200) {
+    const cutoff = Date.now() - 60_000;
+    for (const [k, v] of agent.recentAttackers) if (v.t < cutoff) agent.recentAttackers.delete(k);
+  }
+}
+
+export function recentlyAttacked(agent, e, ms = 20_000) {
+  const r = agent.recentAttackers?.get(e?.id);
+  return Boolean(r && Date.now() - r.t < ms);
+}
+
+// 中立生物平时不招惹，但已经被激怒（末影人发狂）或正在打人的时候要处理掉。
+const RETALIATE = new Set(['enderman', 'zombified_piglin', 'piglin', 'wolf', 'bee', 'polar_bear', 'llama', 'trader_llama', 'panda', 'goat']);
+
+export function provoked(agent, e) {
+  if (!e?.name || !RETALIATE.has(e.name) || !isAliveEntity(agent.bot, e) || protectedReason(agent, e)) return false;
+  if (e.name === 'enderman' && meta(agent.bot, e, 'creepy') === true) return true;
+  return recentlyAttacked(agent, e);
+}
+
 // ── 该不该打 ────────────────────────────────────────────────
 
 const NO_BOAT = new Set(['creeper', 'skeleton', 'stray', 'bogged', 'parched', 'pillager', 'illusioner', 'evoker', 'witch', 'blaze', 'ghast',
@@ -227,26 +200,16 @@ export function fitsBoat(bot, e) {
   return width < 1.375 && !NO_BOAT.has(e.name);
 }
 
-// 苦力怕怎么处理：有弓就射，拿着近战武器且血量健康就“打了就跑”，否则躲开。
+// 苦力怕怎么处理：有弓就射，拿着近战武器且血量健康就按引信进度打了就跑，否则躲开。
 export function creeperPlan(agent) {
   const bot = agent.bot;
-  const c = agent.cfg.combat ?? {};
-  if (c.bow !== false && hasBow(bot)) return 'bow';
-  if (c.creeper_melee !== false && bot.health >= 12 && bot.inventory.items().some(isMeleeWeapon)) return 'melee';
+  const f = combatFlags(agent);
+  if (f.bow && hasBow(bot)) return 'bow';
+  if (f.creeper_melee && bot.health >= 12 && bot.inventory.items().some(isMeleeWeapon)) return 'melee';
   return 'flee';
 }
 
-// 中立生物平时不招惹，但已经被激怒、正在打我的时候要还手（末影人会瞬移，躲是躲不掉的）。
-const RETALIATE = new Set(['enderman', 'zombified_piglin', 'piglin', 'wolf', 'bee', 'polar_bear', 'llama', 'trader_llama', 'panda', 'goat']);
-
-export function provoked(agent, e) {
-  if (!e?.name || !RETALIATE.has(e.name) || !isAliveEntity(agent.bot, e) || protectedReason(agent, e)) return false;
-  if (e.name === 'enderman' && meta(agent.bot, e, 'creepy') === true) return true;
-  const t = agent.attackedBy?.get(e.id);
-  return Boolean(t && Date.now() - t < 20_000);
-}
-
-// 自动防御时可以主动去打的：敌对（或者被激怒来打我的中立生物）、没被保护，而且有对应的打法。
+// 自动防御时可以主动去打的：敌对（或者被激怒的中立生物）、活着、没被保护，而且有对应的打法。
 export function canEngage(agent, e) {
   if (provoked(agent, e)) return true;
   if (!e?.name || !isHostile(e) || !isAliveEntity(agent.bot, e) || protectedReason(agent, e)) return false;
@@ -262,29 +225,77 @@ export const nearestEngageable = (agent, center, radius) => nearestThreat(agent,
 export function meleeHostiles(agent, radius, exclude = null) {
   const bot = agent.bot;
   const me = bot.entity.position;
-  return Object.values(bot.entities).filter((e) => e !== bot.entity && e !== exclude && canMelee(e) && isAliveEntity(bot, e)
-    && !protectedReason(agent, e) && e.position.distanceTo(me) < radius);
+  return Object.values(bot.entities).filter((e) => e !== bot.entity && e !== exclude && e.position && (canMelee(e) || provoked(agent, e))
+    && isAliveEntity(bot, e) && !protectedReason(agent, e) && e.position.distanceTo(me) < radius);
 }
 
 // 被怪群围住：8 格内 3 只以上近战怪
 export const outnumbered = (agent, radius = 8) => meleeHostiles(agent, radius).length >= 3;
 
-// 从怪群里撤出来：主人离怪群比我远就往主人那边跑，否则背对怪群跑开（僵尸追不上疾跑）。
+export function ownerEntity(agent, maxDist = 64) {
+  const bot = agent.bot;
+  return Object.values(bot.players).find((p) => p.username !== bot.username && p.entity && agent.chat.isOwner(p.username)
+    && p.entity.position.distanceTo(bot.entity.position) < maxDist)?.entity ?? null;
+}
+
+// 索敌：从身边和主人身边的怪里挑最该打的。打过人的、被激怒的、苦力怕靠近主人的优先；
+// 正在追人的（手臂举起、拉弓）在战斗模式的范围内都会去打；没在追人的只打靠得很近的。
+export function pickTarget(agent, ownerName = null) {
+  const bot = agent.bot;
+  const f = combatFlags(agent);
+  const me = bot.entity.position;
+  const owner = ownerName ? findPlayer(bot, ownerName)?.entity : ownerEntity(agent);
+  let best = null;
+  let bestScore = -Infinity;
+  for (const e of Object.values(bot.entities)) {
+    if (e === bot.entity || !e.position || !canEngage(agent, e)) continue;
+    const dMe = e.position.distanceTo(me);
+    const dOwner = owner ? e.position.distanceTo(owner.position) : Infinity;
+    const near = Math.min(dMe, dOwner);
+    const angry = provoked(agent, e);
+    const hitSomeone = recentlyAttacked(agent, e);
+    const aggressive = (Number(meta(bot, e, 'mob_flags') ?? 0) & 4) !== 0;
+    const limit = angry || hitSomeone ? Math.max(f.engage_radius, 24) : aggressive ? f.engage_radius : Math.min(6, f.engage_radius);
+    if (near > limit || Math.abs(e.position.y - me.y) > 16) continue;
+    let score = -near;
+    if (hitSomeone) score += 12;
+    if (angry) score += 8;
+    if (aggressive) score += 4;
+    if (e.name === 'creeper') score += dOwner < 6 || dMe < 5 ? 10 : -4;
+    if (/^(skeleton|stray|bogged|parched|pillager|witch|blaze|evoker)$/.test(e.name)) score += 3;
+    if (score > bestScore) {
+      best = e;
+      bestScore = score;
+    }
+  }
+  return best ? preferRider(agent, best, canEngage) : null;
+}
+
+// 从怪群里撤出来：极限模式有鞘翅和烟花就飞走；否则主人离怪群比我远就往主人那边跑，不然背对怪群跑开（僵尸追不上疾跑）。
 export async function retreatFromCrowd(agent, signal, ms = 9000) {
   const bot = agent.bot;
   const crowd = meleeHostiles(agent, 14);
   if (!crowd.length) return;
-  const center = crowd.reduce((acc, e) => acc.plus(e.position), new Vec3(0, 0, 0)).scaled(1 / crowd.length);
+  const center = centroid(crowd);
   const me = bot.entity.position;
-  const owner = Object.values(bot.players).find((p) => p.username !== bot.username && p.entity && agent.chat.isOwner(p.username)
-    && p.entity.position.distanceTo(me) < 64)?.entity;
-  let goal;
-  if (owner && owner.position.distanceTo(center) > me.distanceTo(center) + 3) goal = new goals.GoalFollow(owner, 2);
-  else {
-    const away = new Vec3(me.x - center.x, 0, me.z - center.z);
-    const n = Math.hypot(away.x, away.z) || 1;
-    goal = new goals.GoalXZ(me.x + (away.x / n) * 18, me.z + (away.z / n) * 18);
+  const owner = ownerEntity(agent);
+  const f = combatFlags(agent);
+  const away = new Vec3(me.x - center.x, 0, me.z - center.z);
+  const n = Math.hypot(away.x, away.z) || 1;
+  if (f.elytra && bot.health <= 8 && (bot.inventory.items().some((i) => i.name === 'elytra') || bot.inventory.slots[bot.getEquipmentDestSlot('torso')]?.name === 'elytra')
+    && bot.inventory.items().filter((i) => i.name === 'firework_rocket').reduce((s, i) => s + i.count, 0) >= 3) {
+    const dest = owner && owner.position.distanceTo(center) > 12 ? owner.position : me.plus(away.scaled(45 / n));
+    try {
+      await elytraTravel(agent, { x: dest.x, z: dest.z }, signal);
+      agent.events.push('bot', { what: 'combat', detail: '被怪群围住，用鞘翅飞走了' });
+      return;
+    } catch (err) {
+      if (signal?.aborted) throw err;
+    }
   }
+  const goal = owner && owner.position.distanceTo(center) > me.distanceTo(center) + 3
+    ? new goals.GoalFollow(owner, 2)
+    : new goals.GoalXZ(me.x + (away.x / n) * 18, me.z + (away.z / n) * 18);
   bot.pathfinder.setMovements(makeMovements(bot));
   bot.pathfinder.setGoal(goal, true);
   const until = Date.now() + ms;
@@ -311,7 +322,7 @@ const TACTICS = {
   illusioner: { spacing: 1.8, ranged: true },
   spider: { spacing: 2.4 },
   cave_spider: { spacing: 2.3, boatWhenWeak: true },
-  enderman: { spacing: 2.7, boat: true, water: true },
+  enderman: { spacing: 2.6, boat: true, water: true },
   wither_skeleton: { spacing: 2.7, boat: true },
   vindicator: { spacing: 2.8, boat: true, axe: true },
   piglin_brute: { spacing: 2.8, boat: true, axe: true },
@@ -337,11 +348,10 @@ function isBystander(agent, e, target) {
   if (e.type === 'player') return true;
   if (e.name === 'armor_stand' || e.name === 'mannequin') return true;
   if (!['hostile', 'mob', 'animal', 'passive', 'water_creature', 'ambient', 'living'].includes(e.type)) return false;
-  return !isHostile(e) || Boolean(protectedReason(agent, e));
+  return (!isHostile(e) && !provoked(agent, e)) || Boolean(protectedReason(agent, e));
 }
 
-export function sweepRisk(agent, target) {
-  const bot = agent.bot;
+function sweepZone(target) {
   const zone = bbox(target);
   zone.minX -= 1;
   zone.maxX += 1;
@@ -349,13 +359,27 @@ export function sweepRisk(agent, target) {
   zone.maxZ += 1;
   zone.minY -= 0.25;
   zone.maxY += 0.25;
+  return zone;
+}
+
+export function sweepRisk(agent, target) {
+  const bot = agent.bot;
+  const zone = sweepZone(target);
   return Object.values(bot.entities).some((e) => isBystander(agent, e, target) && overlaps(zone, bbox(e))
     && e.position.distanceTo(bot.entity.position) < 3.3);
+}
+
+// 目标旁边挤着的其他怪（横扫能一起砍到的）
+function clusterAround(agent, target) {
+  const bot = agent.bot;
+  const zone = sweepZone(target);
+  return meleeHostiles(agent, 4, target).filter((e) => overlaps(zone, bbox(e)) && e.position.distanceTo(bot.entity.position) < 3.3).length;
 }
 
 // ── 走位安全：不退下悬崖、不走进岩浆火焰 ────────────────────
 
 const DANGER = /lava|fire|magma_block|cactus|sweet_berry_bush|campfire|powder_snow|wither_rose|pointed_dripstone/;
+const FLAMMABLE = /log|planks|wool|leaves|carpet|hay_block|bookshelf|_wood$|fence|stairs|door|scaffolding|vine|short_grass|tall_grass|fern|flower|tulip|bush|tnt|_bed$|banner|sign|lectern|composter|beehive|bee_nest|target|kelp_block|crafting_table|chest|barrel|campfire|loom/;
 const solid = (b) => b && b.boundingBox === 'block';
 
 export function safeStep(bot, dir) {
@@ -371,7 +395,7 @@ export function safeStep(bot, dir) {
   return false;
 }
 
-// 找放船的地面：spot 所在格或下面一格是实心方块，上面有空间。
+// 找放船、倒水的地面：spot 所在格或下面一格是实心方块，上面有空间。
 function groundUnder(bot, spot) {
   const f = spot.floored();
   for (const dy of [-1, 0, -2]) {
@@ -382,6 +406,22 @@ function groundUnder(bot, spot) {
     if (solid(ground) && !solid(above) && !solid(above2) && !DANGER.test(ground.name) && !/hopper|chest|barrel/.test(ground.name)) return g;
   }
   return null;
+}
+
+// 倒岩浆的地方周围 2 格内不能有会烧起来的东西，主人不能在旁边
+function lavaSafe(agent, pos) {
+  const bot = agent.bot;
+  for (let dx = -2; dx <= 2; dx++) {
+    for (let dy = -1; dy <= 2; dy++) {
+      for (let dz = -2; dz <= 2; dz++) {
+        const b = bot.blockAt(pos.offset(dx, dy, dz));
+        if (b && FLAMMABLE.test(b.name)) return false;
+      }
+    }
+  }
+  const owner = ownerEntity(agent);
+  if (owner && owner.position.distanceTo(pos) < 6) return false;
+  return bot.entity.position.distanceTo(pos.offset(0.5, 0, 0.5)) >= 2.5;
 }
 
 function waitForBoat(bot, near, ms) {
@@ -405,6 +445,21 @@ function dragonHead(dragon, flip = false) {
   return dragon.position.offset(Math.sin(dragon.yaw ?? 0) * 6.5 * s, 0, Math.cos(dragon.yaw ?? 0) * 6.5 * s);
 }
 
+// 平时的普通食物（不含金苹果和坏食物）
+function bestFood(bot) {
+  const foods = bot.registry.foodsByName ?? {};
+  const bad = /^(rotten_flesh|spider_eye|poisonous_potato|pufferfish|chorus_fruit|suspicious_stew|chicken|golden_apple|enchanted_golden_apple)$/;
+  return bot.inventory.items().filter((i) => foods[i.name] && !bad.test(i.name))
+    .sort((a, b) => (foods[b.name].foodPoints + foods[b.name].saturation) - (foods[a.name].foodPoints + foods[a.name].saturation))[0] ?? null;
+}
+
+async function holdItem(bot, item) {
+  if (bot.heldItem?.type === item.type) return;
+  const hotbar = bot.inventory.slots.slice(36, 45).findIndex((s) => s?.type === item.type);
+  if (hotbar >= 0) bot.setQuickBarSlot(hotbar);
+  else await bot.equip(item, 'hand');
+}
+
 // ── 战斗者 ──────────────────────────────────────────────────
 
 export class Fighter {
@@ -412,7 +467,7 @@ export class Fighter {
     this.agent = agent;
     this.bot = agent.bot;
     this.signal = signal;
-    this.cfg = agent.cfg.combat ?? {};
+    this.flags = combatFlags(agent);
     this.boss = boss;
     this.lastAttack = 0;
     this.lastSwap = Date.now();
@@ -420,7 +475,8 @@ export class Fighter {
     this.pathTarget = null;
     this.boatTried = new Set();
     this.boats = new Set();
-    this.stats = { hits: 0, crits: 0, shots: 0, blocks: 0 };
+    this.placedFluids = [];
+    this.stats = { hits: 0, crits: 0, sweeps: 0, shots: 0, blocks: 0, potions: 0 };
     agent.myBoats ??= new Set();
   }
 
@@ -455,17 +511,32 @@ export class Fighter {
   }
 
   async equipShield() {
-    if (this.cfg.shield === false) return;
+    if (!this.flags.shield) return;
     const bot = this.bot;
-    if (bot.inventory.slots[bot.getEquipmentDestSlot('off-hand')]?.name === 'shield') return;
+    const off = bot.inventory.slots[bot.getEquipmentDestSlot('off-hand')]?.name;
+    if (off === 'shield' || off === 'totem_of_undying') return;
     const s = findInv(bot, /^shield$/);
     if (s) await bot.equip(s, 'off-hand').catch(() => {});
+  }
+
+  // 血少时把不死图腾换到副手（盾牌先收起来）；打 Boss 时一直拿着
+  async ensureTotem() {
+    if (!this.flags.totem) return false;
+    const bot = this.bot;
+    if (bot.inventory.slots[bot.getEquipmentDestSlot('off-hand')]?.name === 'totem_of_undying') return true;
+    if (bot.health > 10 && !this.boss) return false;
+    const totem = findInv(bot, /^totem_of_undying$/);
+    if (!totem) return false;
+    this.lower();
+    await bot.equip(totem, 'off-hand').catch(() => {});
+    log.info('血少了，把不死图腾拿到副手');
+    return true;
   }
 
   // ── 盾牌 ──
   canBlock() {
     const bot = this.bot;
-    return this.cfg.shield !== false && !bot.vehicle && Date.now() > (this.agent.shieldCooldownUntil ?? 0)
+    return this.flags.shield && !bot.vehicle && Date.now() > (this.agent.shieldCooldownUntil ?? 0)
       && bot.inventory.slots[bot.getEquipmentDestSlot('off-hand')]?.name === 'shield';
   }
 
@@ -538,6 +609,16 @@ export class Fighter {
     return d;
   }
 
+  // 面朝目标往后退一小段（边打边退，别让怪群围上来）
+  async backOff(from, ms = 350) {
+    const bot = this.bot;
+    if (!safeStep(bot, towardUnit(from, bot.entity.position))) return;
+    bot.setControlState('forward', false);
+    bot.setControlState('back', true);
+    await this.wait(ms);
+    bot.setControlState('back', false);
+  }
+
   async runFrom(e, distance = 8, ms = 2500) {
     this.lower();
     this.manual();
@@ -556,7 +637,7 @@ export class Fighter {
 
   canCrit() {
     const e = this.bot.entity;
-    return this.cfg.crits !== false && e.onGround && !e.isInWater && !e.isInLava && !this.bot.vehicle;
+    return this.flags.crits && e.onGround && !e.isInWater && !e.isInLava && !this.bot.vehicle;
   }
 
   // 跳劈：起跳 → 等到开始下落 → 出手。下落中出手 = 暴击（伤害 ×1.5），而且不会横扫误伤旁边的人。
@@ -621,25 +702,48 @@ export class Fighter {
     }
   }
 
+  // 打斗间隙（身边 6 格没有近战怪、没有飞来的东西）吃口饭回血
+  async snack() {
+    const bot = this.bot;
+    if (bot.food >= 20 || bot.health >= 18 || this.meleeCrowd(6) > 0 || incomingProjectile(bot, 20)) return false;
+    const food = bestFood(bot);
+    if (!food) return false;
+    this.lower();
+    this.manual();
+    this.stopMove();
+    try {
+      await holdItem(bot, food);
+      await bot.consume();
+      return true;
+    } catch {
+      return false;
+    } finally {
+      this.lastSwap = Date.now();
+      await this.ensureWeapon();
+    }
+  }
+
   hasEffect(name) {
     const id = this.bot.registry.effectsByName?.[name]?.id;
     return id != null && Boolean(this.bot.entity.effects?.[id]);
   }
 
   meleeCrowd(radius) {
-    const me = this.bot.entity.position;
-    return Object.values(this.bot.entities).filter((e) => e !== this.bot.entity && canMelee(e) && e.position.distanceTo(me) < radius).length;
+    return meleeHostiles(this.agent, radius).length;
   }
 
-  // 喝药水 / 扔喷溅药水（放下盾牌、停下脚步，用完换回武器）
+  // 给自己用药水（放下盾牌、停下脚步，用完换回武器）
   async potion(kinds) {
-    if (this.cfg.potions === false) return false;
+    if (!this.flags.potions) return false;
     this.lower();
     this.manual();
     this.stopMove();
     try {
       const used = await usePotion(this.agent, kinds);
-      if (used) log.info(`用了药水：${used}`);
+      if (used) {
+        this.stats.potions += 1;
+        log.info(`用了药水：${used}`);
+      }
       return Boolean(used);
     } catch {
       return false;
@@ -649,9 +753,27 @@ export class Fighter {
     }
   }
 
+  // 往怪堆里砸伤害类喷溅药水（亡灵用治疗药水）。离自己和主人都要够远，免得溅到自己人。
+  async potionAtCrowd(target) {
+    if (!this.flags.potions || Date.now() < (this.nextThrow ?? 0)) return false;
+    const bot = this.bot;
+    const d = bot.entity.position.distanceTo(target.position);
+    const owner = ownerEntity(this.agent);
+    if (d < 4.2 || d > 6.2 || (owner && owner.position.distanceTo(target.position) < 4.5)) return false;
+    if (meleeHostiles(this.agent, 12).length < 3 && !this.boss) return false;
+    this.lower();
+    const used = await throwPotionAt(this.agent, target, offensiveKindsFor(target)).catch(() => null);
+    if (!used) return false;
+    this.nextThrow = Date.now() + 2500;
+    this.stats.potions += 1;
+    this.lastSwap = Date.now();
+    await this.ensureWeapon();
+    return true;
+  }
+
   // 被围住又打不过：原地垫方块搭柱子躲上去（僵尸之类够不着），在上面接着打或射箭，血回来再下去。
   async pillar() {
-    if (this.cfg.pillar === false || this.perched) return false;
+    if (!this.flags.pillar || this.perched) return false;
     this.lower();
     this.manual();
     this.stopMove();
@@ -666,18 +788,24 @@ export class Fighter {
   async emergency(target) {
     const bot = this.bot;
     if (!['survival', 'adventure'].includes(bot.game?.gameMode)) return;
-    const retreatAt = Number(this.agent.cfg.behavior.retreat_health ?? 8);
+    await this.ensureTotem();
+    const retreatAt = Math.max(0, Number(this.agent.cfg.behavior.retreat_health ?? 8) + (this.flags.retreat_bonus ?? 0));
     const burning = (Number(meta(bot, bot.entity, 'shared_flags') ?? 0) & 1) === 1;
     if (burning && bot.health <= 14 && !this.hasEffect('FireResistance') && await this.potion(['fire_resistance'])) return;
     if (this.hasEffect('Wither') && bot.health <= 12 && await this.consume(/^milk_bucket$/)) return;
     if (bot.health <= Math.max(retreatAt, 8)) {
       if (await this.potion(['healing', 'regeneration', 'turtle_master'])) return;
-      if (this.cfg.golden_apples !== false && await this.consume(this.boss ? /^(enchanted_)?golden_apple$/ : /^golden_apple$/)) return;
+      if (this.flags.golden_apples) {
+        const apples = this.boss || this.flags.enchanted_apples ? /^(enchanted_)?golden_apple$/ : /^golden_apple$/;
+        if (await this.consume(apples)) return;
+      }
       if (this.meleeCrowd(4) >= 2 && await this.pillar()) return;
     }
+    if (bot.health < 16 && await this.snack()) return;
     const crowd = meleeHostiles(this.agent, 5, target).length + 1;
     if (!this.perched && !this.boss && crowd >= 3 && bot.health <= 14) {
-      // 被围住又开始掉血：先垫方块躲上去，垫不了就撤
+      // 被围住又开始掉血：水桶冲开 → 垫方块躲上去 → 撤
+      if (await this.waterWall()) return;
       if (await this.pillar()) return;
       this.lower();
       this.stopMove();
@@ -702,7 +830,7 @@ export class Fighter {
   async dodgeCreepers(target) {
     const bot = this.bot;
     for (const e of Object.values(bot.entities)) {
-      if (e.name !== 'creeper' || e === target) continue;
+      if (e.name !== 'creeper' || e === target || !alive(bot, e)) continue;
       if (flat(e.position, bot.entity.position) < 7 && (meta(bot, e, 'swell_dir') > 0 || meta(bot, e, 'is_ignited') === true)) {
         await this.runFrom(e, 8);
         return true;
@@ -718,11 +846,91 @@ export class Fighter {
     return this.raise(threat.position.offset(0, 1, 0));
   }
 
+  // ── 水桶、岩浆桶 ──
+
+  // 水桶冲开怪群：在自己和怪群之间倒一桶水，水流把怪往外推（下界不行）。打完把水收回来。
+  async waterWall() {
+    const bot = this.bot;
+    if (!this.flags.water || inNether(bot) || Date.now() < (this.nextWater ?? 0)) return false;
+    const bucket = findInv(bot, /^water_bucket$/);
+    const crowd = meleeHostiles(this.agent, 8);
+    if (!bucket || crowd.length < 3) return false;
+    const me = bot.entity.position;
+    const ground = groundUnder(bot, me.plus(towardUnit(me, centroid(crowd)).scaled(1.6)));
+    if (!ground) return false;
+    this.nextWater = Date.now() + 15_000;
+    this.lower();
+    this.manual();
+    this.stopMove();
+    await holdItem(bot, bucket);
+    await bot.lookAt(new Vec3(ground.x + 0.5, ground.y + 1, ground.z + 0.5), true);
+    await this.wait(60);
+    bot.activateItem();
+    bot.deactivateItem();
+    this.placedFluids.push(ground.offset(0, 1, 0));
+    this.agent.events.push('bot', { what: 'combat', detail: '倒水把怪群冲开' });
+    this.lastSwap = Date.now();
+    await this.ensureWeapon();
+    return true;
+  }
+
+  // 岩浆桶烫怪（极限模式）：目标 3～4.3 格远、周围没有会烧的东西、主人不在旁边时，倒在它脚下，然后退开。
+  async lavaStrike(target) {
+    const bot = this.bot;
+    if (!this.flags.lava || Date.now() < (this.nextLava ?? 0) || /^(blaze|magma_cube|ghast|strider|wither|wither_skeleton|ender_dragon)$/.test(target.name)) return false;
+    const lava = findInv(bot, /^lava_bucket$/);
+    if (!lava) return false;
+    const d = bot.entity.position.distanceTo(target.position);
+    if (d < 3 || d > 4.3) return false;
+    const feet = target.position.floored();
+    const ground = bot.blockAt(feet.offset(0, -1, 0));
+    if (!solid(ground) || !isEmpty(bot.blockAt(feet)) || !lavaSafe(this.agent, feet)) return false;
+    this.nextLava = Date.now() + 8000;
+    this.lower();
+    this.manual();
+    this.stopMove();
+    await holdItem(bot, lava);
+    await bot.lookAt(new Vec3(feet.x + 0.5, feet.y, feet.z + 0.5), true);
+    await this.wait(60);
+    bot.activateItem();
+    bot.deactivateItem();
+    this.placedFluids.push(feet.clone());
+    this.agent.events.push('bot', { what: 'combat', detail: `往 ${target.name} 脚下倒了岩浆` });
+    await this.backOff(target.position, 500);
+    this.lastSwap = Date.now();
+    await this.ensureWeapon();
+    return true;
+  }
+
+  // 打完把倒出去的水和岩浆收回来（只收源头方块）
+  async collectFluids() {
+    const bot = this.bot;
+    for (const pos of this.placedFluids.splice(0)) {
+      const b = bot.blockAt(pos);
+      if (!b || !/^(water|lava)$/.test(b.name) || Number(b.getProperties?.().level ?? 0) !== 0) continue;
+      const bucket = findInv(bot, /^bucket$/);
+      if (!bucket) break;
+      try {
+        if (bot.entity.position.distanceTo(pos.offset(0.5, 0.5, 0.5)) > 4) {
+          await gotoGoal(this.agent, new goals.GoalNear(pos.x, pos.y, pos.z, 3), { timeoutMs: 8000 });
+        }
+        await holdItem(bot, bucket);
+        await bot.lookAt(pos.offset(0.5, 0.5, 0.5), true);
+        await sleep(80);
+        bot.activateItem();
+        bot.deactivateItem();
+        await sleep(300);
+      } catch (err) {
+        log.debug(`收水/岩浆失败：${err.message}`);
+      }
+    }
+  }
+
   // ── 远程 ──
   async shoot(target, { aimY = 0.5 } = {}) {
     const bot = this.bot;
     const bow = findInv(bot, /^bow$/);
-    if (!bow || !hasArrows(bot) || this.cfg.bow === false) return false;
+    if (!bow || !hasArrows(bot) || !this.flags.bow) return false;
     this.lower();
     this.manual();
     this.stopMove();
@@ -780,10 +988,9 @@ export class Fighter {
   // ── 船困怪 ──
   shouldBoat(target, t) {
     const bot = this.bot;
-    if (this.cfg.boat_trap === false || this.boatTried.has(target.id) || target.vehicle || !boatItem(bot) || !fitsBoat(bot, target)) return false;
+    if (!this.flags.boat_trap || this.boatTried.has(target.id) || target.vehicle || !boatItem(bot) || !fitsBoat(bot, target)) return false;
     if (t.boat) return true;
-    const crowd = Object.values(bot.entities).filter((e) => e !== target && canMelee(e) && e.position.distanceTo(bot.entity.position) < 8).length;
-    const weak = bot.health <= 12 || !bot.inventory.items().some(isMeleeWeapon) || crowd >= 1;
+    const weak = bot.health <= 12 || !bot.inventory.items().some(isMeleeWeapon) || this.meleeCrowd(8) >= 2;
     return Boolean(t.boatWhenWeak) && weak;
   }
 
@@ -868,8 +1075,7 @@ export class Fighter {
   shouldGuard(target, d) {
     if (d > 3.6 || this.msUntilReady() < 350) return false;
     const heavy = cooldownMs(this.bot.heldItem) >= 800;
-    const crowd = Object.values(this.bot.entities).filter((e) => e !== target && canMelee(e) && e.position.distanceTo(this.bot.entity.position) < 3.5).length;
-    return heavy || this.bot.health < 14 || crowd >= 1;
+    return heavy || this.bot.health < 14 || this.meleeCrowd(3.5) >= 2;
   }
 
   async retreatToWater() {
@@ -883,9 +1089,47 @@ export class Fighter {
     return Boolean(bot.entity.isInWater);
   }
 
+  // 近身时的一步：面朝目标、保持距离、该挡就挡、该打就打（群怪时优先横扫，打完往后退一步）。
+  async step(target, t, { trapped = false } = {}) {
+    const bot = this.bot;
+    await this.face(target);
+    const d = this.steer(target, trapped ? 2.5 : t.spacing, { strafe: t.ranged && !trapped });
+    if (!trapped && this.blockIfThreatened()) {
+      await this.wait(50);
+      return;
+    }
+    const crowd = this.meleeCrowd(4);
+    const kite = async () => {
+      if (this.flags.kite && crowd >= 2) await this.backOff(target.position, 300);
+    };
+    if (this.ready()) {
+      const reach = reachTo(bot, target);
+      const cluster = clusterAround(this.agent, target);
+      if (this.flags.sweep && isSword(bot.heldItem) && cluster >= 1 && reach <= REACH && bot.entity.onGround && !sweepRisk(this.agent, target)) {
+        // 目标旁边还挤着别的怪：站稳平砍，横扫一次砍到好几只
+        bot.setControlState('sprint', false);
+        this.hit(target);
+        this.stats.sweeps += 1;
+        await kite();
+        return;
+      }
+      if (reach <= REACH + 0.5 && await this.critStrike(target)) {
+        await kite();
+        return;
+      }
+      if (reach <= REACH && !(isSword(bot.heldItem) && sweepRisk(this.agent, target))) {
+        this.hit(target);
+        await kite();
+        return;
+      }
+    } else if (!t.axe && !trapped && this.shouldGuard(target, d)) {
+      this.raise(target.position.offset(0, Math.min((target.height ?? 1.8) * 0.8, 1.5), 0));
+    } else this.lower();
+    await this.wait(50);
+  }
+
   async melee(target, until, t = TACTICS.default, { trapped = false } = {}) {
     const bot = this.bot;
-    const spacing = trapped ? 2.5 : t.spacing;
     while (Date.now() < until) {
       this.check();
       if (!alive(bot, target)) return true;
@@ -893,6 +1137,8 @@ export class Fighter {
       if (await this.dodgeCreepers(target)) continue;
       if (t.water && bot.health <= 10 && await this.retreatToWater()) return false;
       const d = flat(bot.entity.position, target.position);
+      const dy = target.position.y - bot.entity.position.y;
+      if (d > 48) return false;
       if (this.perched) {
         // 在柱子上：够得着就打，有弓就射，血回来了或者怪少了再下去
         await this.face(target);
@@ -908,64 +1154,60 @@ export class Fighter {
         await this.wait(100);
         continue;
       }
-      const dy = target.position.y - bot.entity.position.y;
-      if (d > 32) return false;
+      // 怪堆就在前面：先砸药水，再试岩浆
+      if (!trapped && (await this.potionAtCrowd(target) || await this.lavaStrike(target))) continue;
+      // 远了：远程怪或者正冲过来的，有弓先射几箭；否则用寻路靠近（能绕开障碍）
+      if (d > 10 && this.flags.bow && hasBow(bot) && !trapped && target.name !== 'enderman') {
+        await this.shoot(target);
+        continue;
+      }
       if (d > 5 || Math.abs(dy) > 2.5) {
-        // 远了用寻路靠近（能绕开障碍）；远程怪在瞄准时举盾顶上去
         if (!(t.ranged && bot.health < 14 && this.blockIfThreatened())) this.lower();
-        this.follow(target, Math.max(1, spacing - 0.5));
+        this.follow(target, Math.max(1, (trapped ? 2.5 : t.spacing) - 0.5));
         await this.wait(100);
         continue;
       }
       this.manual();
-      await this.face(target);
-      this.steer(target, spacing, { strafe: t.ranged && !trapped });
-      if (!trapped && this.blockIfThreatened()) {
-        await this.wait(50);
-        continue;
-      }
-      if (this.ready()) {
-        if (reachTo(bot, target) <= REACH + 0.5 && await this.critStrike(target)) continue;
-        if (reachTo(bot, target) <= REACH && !(isSword(bot.heldItem) && sweepRisk(this.agent, target))) {
-          this.hit(target);
-          continue;
-        }
-      } else if (!t.axe && !trapped && this.shouldGuard(target, d)) {
-        this.raise(target.position.offset(0, Math.min((target.height ?? 1.8) * 0.8, 1.5), 0));
-      } else this.lower();
-      await this.wait(50);
+      await this.step(target, t, { trapped });
     }
     return !alive(bot, target);
   }
 
   // ── 专门打法 ──
 
-  // 苦力怕：有弓先射；近战就“打了就跑”——站在它还不会膨胀的 3 格外冲刺击退，再退开；
-  // 一旦开始膨胀立刻跑远（它膨胀时不会追），跑不掉就举盾正对它挡爆炸。
+  // 苦力怕：估算它的引信（膨胀时每刻 +1，到 30 刻爆炸；离开 7 格或看不见时往回减），据此决定：
+  //   时间还够 → 冲刺击退再砍一刀（击退能把它推开）；快来不及了 → 立刻跑出 7 格；跑不掉 → 举盾正对它挡爆炸。
+  //   有弓就在 5 格外射；没膨胀时在它还不会膨胀的 3～3.5 格出手，打完退开。
   async creeper(target, until) {
     const bot = this.bot;
+    let fuse = 0;
+    let last = Date.now();
     while (Date.now() < until) {
       this.check();
       if (!alive(bot, target)) return true;
       await this.emergency(target);
-      const d = flat(bot.entity.position, target.position);
-      if (d > 32) return false;
+      const now = Date.now();
+      const ticks = (now - last) / 50;
+      last = now;
       const swelling = meta(bot, target, 'swell_dir') > 0 || meta(bot, target, 'is_ignited') === true;
-      if (swelling) {
-        if (d < 7.5) {
-          const ok = await this.runFrom(target, 8, 2000);
-          if (!ok && flat(bot.entity.position, target.position) < 5 && this.raise(target.position.offset(0, 1, 0))) {
-            const t0 = Date.now();
-            while (Date.now() - t0 < 2000 && alive(bot, target)) {
-              await this.face(target, 1);
-              await this.wait(50);
-            }
-            this.lower();
+      fuse = Math.max(0, Math.min(30, fuse + (swelling ? ticks : -ticks)));
+      const d = flat(bot.entity.position, target.position);
+      if (d > 40) return false;
+      const plan = creeperPlan(this.agent);
+      const left = 30 - fuse;
+      const escape = Math.max(0, (7.5 - d) / 0.28); // 疾跑跑出 7 格要的刻数
+      if (swelling && (plan === 'flee' || left < escape + 6)) {
+        const ok = await this.runFrom(target, 8, Math.max(800, left * 50 + 600));
+        if (!ok && flat(bot.entity.position, target.position) < 5 && this.raise(target.position.offset(0, 1, 0))) {
+          const t0 = Date.now();
+          while (Date.now() - t0 < Math.max(600, left * 50 + 400) && alive(bot, target)) {
+            await this.face(target, 1);
+            await this.wait(50);
           }
-        } else await this.wait(100);
+          this.lower();
+        }
         continue;
       }
-      const plan = creeperPlan(this.agent);
       if (plan === 'bow' && d >= 5 && d <= 30) {
         await this.shoot(target);
         continue;
@@ -982,21 +1224,61 @@ export class Fighter {
       }
       this.manual();
       await this.face(target);
-      const toward = towardUnit(bot.entity.position, target.position);
-      bot.setControlState('forward', d > 3.45 && safeStep(bot, toward));
-      bot.setControlState('back', d < 3.05 && safeStep(bot, toward.scaled(-1)));
-      bot.setControlState('sprint', false);
-      if (d >= 3.0 && d <= 3.5 && this.ready() && reachTo(bot, target) <= REACH + 0.15) {
+      const inReach = reachTo(bot, target) <= REACH + 0.1;
+      const safeToHit = !swelling ? d >= 2.9 : left > escape + 12;
+      if (this.ready() && inReach && safeToHit) {
         this.stopMove();
         await this.sprintHit(target);
-        if (safeStep(bot, towardUnit(target.position, bot.entity.position))) {
-          bot.setControlState('back', true);
-          await this.wait(350);
-          bot.setControlState('back', false);
-        }
+        await this.backOff(target.position, 400);
         continue;
       }
+      // 没准备好就退到 3.2～3.5 格等着，准备好了再往前凑
+      const toward = towardUnit(bot.entity.position, target.position);
+      bot.setControlState('forward', this.ready() && d > 3.45 && safeStep(bot, toward));
+      bot.setControlState('back', (!this.ready() || d < 3.05) && safeStep(bot, toward.scaled(-1)));
+      bot.setControlState('sprint', false);
       await this.wait(50);
+    }
+    return !alive(bot, target);
+  }
+
+  // 末影人：被激怒后会瞬移到它的目标身边打人。近身就跳劈、举盾；它瞬移走了不丢目标——
+  // 它在找主人就守在主人旁边，在找我就原地等它回来；不生气又走远了才放弃。有船先船困（船里不能瞬移），血少躲进水里。不用弓箭（会躲开）。
+  async enderman(target, until) {
+    const bot = this.bot;
+    const t = TACTICS.enderman;
+    let lostSince = null;
+    while (Date.now() < until) {
+      this.check();
+      if (!alive(bot, target)) return true;
+      await this.emergency(target);
+      const d = target.isValid ? bot.entity.position.distanceTo(target.position) : Infinity;
+      if (d > 64) {
+        lostSince ??= Date.now();
+        if (Date.now() - lostSince > 8000) return false;
+        await this.wait(200);
+        continue;
+      }
+      lostSince = null;
+      if (bot.health <= 10 && await this.retreatToWater()) return false;
+      if (d < 9 && this.shouldBoat(target, t) && await this.boatTrap(target)) return this.melee(target, until, t, { trapped: true });
+      if (d <= 5.5 && Math.abs(target.position.y - bot.entity.position.y) < 2.5) {
+        this.manual();
+        await this.step(target, t);
+        continue;
+      }
+      if (!provoked(this.agent, target) && d > 16) return false;
+      const owner = ownerEntity(this.agent);
+      if (owner && owner.position.distanceTo(target.position) < d - 2 && owner.position.distanceTo(bot.entity.position) > 3) this.follow(owner, 2);
+      else if (d < 24) this.follow(target, 2);
+      else {
+        this.manual();
+        this.stopMove();
+        await this.face(target);
+      }
+      if (d < 7 && this.msUntilReady() > 150) this.raise(target.position.offset(0, 2.2, 0));
+      else this.lower();
+      await this.wait(100);
     }
     return !alive(bot, target);
   }
@@ -1262,6 +1544,7 @@ export class Fighter {
     if (name === 'wither') return this.wither(target, until);
     if (name === 'end_crystal') return this.crystal(target, until);
     if (name === 'creeper') return this.creeper(target, until);
+    if (name === 'enderman') return this.enderman(target, until);
     if (name === 'ghast') return this.ghast(target, until);
     if (name === 'phantom') return this.phantom(target, until);
     if (name === 'blaze' || name === 'breeze' || name === 'vex') return this.flyer(target, until);
@@ -1278,20 +1561,25 @@ export async function fight(agent, target, signal, timeoutMs = 45_000, opts = {}
   try {
     await f.equip();
     const won = await f.run(target, Date.now() + timeoutMs);
-    const { hits, crits, shots, blocks } = f.stats;
-    if (hits + shots) log.debug(`${target.name ?? target.username}：出手 ${hits} 次（暴击 ${crits}），射击 ${shots} 次，举盾 ${blocks} 次`);
+    const { hits, crits, sweeps, shots, blocks, potions } = f.stats;
+    if (hits + shots + potions) {
+      log.debug(`${target.name ?? target.username}：出手 ${hits} 次（暴击 ${crits}、横扫 ${sweeps}），射击 ${shots} 次，举盾 ${blocks} 次，药水 ${potions} 瓶（${f.flags.mode}模式）`);
+    }
     return won;
   } finally {
     agent.fighting -= 1;
     f.lower();
     f.stopMove();
     f.manual();
-    if (!signal?.aborted) await f.collectBoats().catch(() => {});
+    if (!signal?.aborted) {
+      await f.collectBoats().catch(() => {});
+      await f.collectFluids().catch(() => {});
+    }
     await sleep(50);
   }
 }
 
-// ── 平时的防御本能：看到飞来的箭 / 火球、有远程怪在瞄准自己时举盾；记录盾牌被斧头打掉的冷却 ──
+// ── 平时的本能：举盾挡箭、图腾换回盾牌、着火倒水、溺水上浮、主人血少时往他身上扔治疗药水 ──
 
 const CALM_TASKS = new Set(['companion', 'follow', 'come', 'guard', 'goto', 'pickup']);
 
@@ -1299,6 +1587,9 @@ export function installCombatSense(agent, bot) {
   agent.myBoats ??= new Set();
   let blocking = false;
   let holdUntil = 0;
+  let lastAllyPotion = 0;
+  let lastFireWater = 0;
+  let lastFight = 0;
   const lower = () => {
     if (!blocking) return;
     bot.deactivateItem();
@@ -1311,9 +1602,67 @@ export function installCombatSense(agent, bot) {
       if (p.cooldownTicks > 0) agent.events.push('bot', { what: 'combat', detail: `盾牌被斧头打掉了，${Math.round(p.cooldownTicks / 20)} 秒后才能再举` });
     }
   });
+  const busy = () => bot.usingHeldItem || bot.currentWindow || bot.targetDigBlock;
+  const slowTimer = setInterval(async () => {
+    try {
+      if (!agent.online || !bot.entity || bot.isSleeping) return;
+      if (agent.fighting) lastFight = Date.now();
+      const f = combatFlags(agent);
+      const off = bot.inventory.slots[bot.getEquipmentDestSlot('off-hand')];
+      // 打完 10 秒、血回来了：副手的图腾换回盾牌
+      if (off?.name === 'totem_of_undying' && !agent.fighting && Date.now() - lastFight > 10_000 && bot.health >= 16 && !busy()) {
+        const shield = bot.inventory.items().find((i) => i.name === 'shield');
+        if (shield) await bot.equip(shield, 'off-hand').catch(() => {});
+      }
+      // 溺水：氧气不多了就往上游
+      if (bot.entity.isInWater && (bot.oxygenLevel ?? 20) < 8) {
+        bot.setControlState('jump', true);
+        setTimeout(() => bot.setControlState('jump', false), 900);
+      }
+      // 着火又没有抗火：倒一桶水在脚下灭火，再收回来（下界不行）
+      const burning = (Number(meta(bot, bot.entity, 'shared_flags') ?? 0) & 1) === 1;
+      const water = bot.inventory.items().find((i) => i.name === 'water_bucket');
+      if (burning && water && !agent.fighting && !bot.entity.isInWater && !inNether(bot) && Date.now() - lastFireWater > 5000 && !busy()) {
+        lastFireWater = Date.now();
+        await holdItem(bot, water);
+        await bot.look(bot.entity.yaw, -Math.PI / 2, true);
+        bot.activateItem();
+        bot.deactivateItem();
+        await sleep(700);
+        const src = bot.findBlock({ matching: (b) => b.name === 'water' && Number(b.getProperties?.().level ?? 0) === 0, maxDistance: 3 });
+        const bucket = bot.inventory.items().find((i) => i.name === 'bucket');
+        if (src && bucket) {
+          await holdItem(bot, bucket);
+          await bot.lookAt(src.position.offset(0.5, 0.5, 0.5), true);
+          await sleep(60);
+          bot.activateItem();
+          bot.deactivateItem();
+        }
+      }
+      // 主人血少：往他身上扔喷溅治疗 / 再生药水；主人着火：扔抗火
+      if (f.potions && Date.now() - lastAllyPotion > 8000 && !busy()) {
+        const owner = ownerEntity(agent, 6);
+        if (owner) {
+          const hp = healthOf(bot, owner);
+          const ownerBurning = (Number(meta(bot, owner, 'shared_flags') ?? 0) & 1) === 1;
+          const kinds = hp != null && hp <= 8 ? ['healing', 'regeneration'] : ownerBurning ? ['fire_resistance'] : null;
+          if (kinds) {
+            const used = await throwPotionAt(agent, owner, kinds.filter((k) => ALLY_KINDS.includes(k))).catch(() => null);
+            if (used) {
+              lastAllyPotion = Date.now();
+              agent.events.push('bot', { what: 'combat', detail: `给主人扔了 ${used} 药水` });
+              await equipBestWeapon(bot);
+            }
+          }
+        }
+      }
+    } catch {
+      // 数据不全时跳过这一轮
+    }
+  }, 1000);
   const timer = setInterval(() => {
     try {
-      if (!agent.online || !bot.entity || agent.fighting || bot.isSleeping || agent.cfg.combat?.shield === false) {
+      if (!agent.online || !bot.entity || agent.fighting || bot.isSleeping || !combatFlags(agent).shield) {
         if (!agent.fighting) lower();
         else blocking = false;
         return;
@@ -1339,5 +1688,8 @@ export function installCombatSense(agent, bot) {
       // 实体数据不全时跳过这一轮
     }
   }, 100);
-  bot.once('end', () => clearInterval(timer));
+  bot.once('end', () => {
+    clearInterval(timer);
+    clearInterval(slowTimer);
+  });
 }

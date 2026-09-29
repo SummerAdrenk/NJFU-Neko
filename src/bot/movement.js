@@ -1,5 +1,5 @@
 // 移动与生存技能：垫方块（往上搭柱子）、落地水 / 落地船 / 鞘翅滑翔（防摔）、鞘翅长途飞行、
-// 穿越传送门、坐船 / 矿车 / 骑马、驯服动物、喝药水 / 扔喷溅药水。
+// 穿越传送门、坐船 / 矿车 / 骑马、驯服动物。药水见 potions.js。
 import { goals, makeMovements } from './createBot.js';
 import { countItem, findNearestBlock, findPlayer, gotoGoal, gotoNear, Vec3 } from './helpers.js';
 import { getLog } from '../log.js';
@@ -297,48 +297,6 @@ export async function tame(agent, { animal, give_to: giveTo }, signal) {
     note = `，主人改成了 ${giveTo}`;
   }
   return `驯服了一只 ${name}（试了 ${tries} 次${note}）`;
-}
-
-// ── 药水 ──
-// 药水 ID（注册表顺序，1.21 起未变）
-const POTIONS = ['water', 'mundane', 'thick', 'awkward', 'night_vision', 'long_night_vision', 'invisibility', 'long_invisibility', 'leaping', 'long_leaping',
-  'strong_leaping', 'fire_resistance', 'long_fire_resistance', 'swiftness', 'long_swiftness', 'strong_swiftness', 'slowness', 'long_slowness',
-  'strong_slowness', 'turtle_master', 'long_turtle_master', 'strong_turtle_master', 'water_breathing', 'long_water_breathing', 'healing',
-  'strong_healing', 'harming', 'strong_harming', 'poison', 'long_poison', 'strong_poison', 'regeneration', 'long_regeneration',
-  'strong_regeneration', 'strength', 'long_strength', 'strong_strength', 'weakness', 'long_weakness', 'luck', 'slow_falling', 'long_slow_falling',
-  'wind_charged', 'weaving', 'oozing', 'infested'];
-
-export function potionType(item) {
-  const data = item?.componentMap?.get?.('potion_contents')?.data;
-  const id = data?.potionId ?? data?.potion ?? data?.potion_id;
-  if (typeof id === 'number') return POTIONS[id] ?? null;
-  if (typeof id === 'string') return id.replace(/^minecraft:/, '');
-  return null;
-}
-
-// kinds：想要的效果（例如 ['healing', 'regeneration']，自动包含 long_ / strong_ 版本）
-export function findPotion(bot, kinds, { splash = null } = {}) {
-  const want = (t) => t && kinds.some((k) => t === k || t === `long_${k}` || t === `strong_${k}`);
-  return bot.inventory.items().find((i) => (splash === true ? i.name === 'splash_potion' : splash === false ? i.name === 'potion' : /^(splash_)?potion$/.test(i.name))
-    && want(potionType(i))) ?? null;
-}
-
-// 喝药水或者对自己脚下扔喷溅药水。返回用掉的药水效果名，没有就返回 null。
-export async function usePotion(agent, kinds) {
-  const bot = agent.bot;
-  const splash = findPotion(bot, kinds, { splash: true });
-  if (splash) {
-    await holdInHand(bot, splash);
-    await bot.look(bot.entity.yaw, -Math.PI / 2, true);
-    bot.activateItem();
-    bot.deactivateItem();
-    return potionType(splash);
-  }
-  const drink = findPotion(bot, kinds, { splash: false });
-  if (!drink) return null;
-  await holdInHand(bot, drink);
-  await bot.consume();
-  return potionType(drink);
 }
 
 // ── 鞘翅长途飞行（需要穿着或带着鞘翅，外加烟花火箭）──
