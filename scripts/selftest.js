@@ -278,6 +278,13 @@ const sweeper = new Duels({ cfg: {}, bot: { username: 'NJFU_Neko' }, adminComman
 sweeper.sweepTemp('Steve');
 sweeper.sweepTemp('NJFU_Neko');
 check('决斗 收掉玩家身上漏网的临时装备（不动她自己的）', sweepCmds.length === 1 && sweepCmds[0] === 'clear Steve *[custom_data~{neko_temp:1b}]');
+sweepCmds.length = 0;
+sweeper.lockDuel(true, ['Steve', 'NJFU_Neko']);
+sweeper.lockDuel(false, ['Steve', 'NJFU_Neko']);
+check('决斗锁 每人一条命令（/njfu duel on 一次只认一个名字，写两个整条失败）',
+  sweepCmds.join('|') === 'njfu duel on Steve|njfu duel on NJFU_Neko|njfu duel off Steve|njfu duel off NJFU_Neko');
+const duelSrc = fs.readFileSync(new URL('../src/bot/duel.js', import.meta.url), 'utf8');
+check('决斗锁 代码里没有一条命令写两个名字的', !/njfu duel (on|off) \$\{[^}]+\} \$\{/.test(duelSrc));
 
 const createBotMod = await import('../src/bot/createBot.js');
 check('鞘翅 展开的动作名（新版本 start_fall_flying，不能用 mineflayer 的旧名字）', createBotMod.fallFlyingAction(registry) === 'start_fall_flying');

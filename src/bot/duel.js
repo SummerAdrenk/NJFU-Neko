@@ -220,6 +220,12 @@ export class Duels {
     this.agent.adminCommand(`execute in ${pos.dim ?? 'minecraft:overworld'} run tp ${who} ${pos.x} ${pos.y} ${pos.z}`);
   }
 
+  // 模组的决斗锁（锁 1 滴血、决斗中不开她的背包、附近爆炸不破坏方块）。/njfu duel on|off 一次只认一个名字：
+  // 写成 “on 甲 乙” 整条命令都会失败（静默执行看不到报错），所以每人发一条
+  lockDuel(on, players) {
+    for (const p of new Set(players)) this.agent.adminCommand(`njfu duel ${on ? 'on' : 'off'} ${p}`);
+  }
+
   // 收掉玩家身上所有的临时装备：背包、盔甲、副手，还有 2×2 合成格里放着的、鼠标上拿着的（原版 /clear 都管，
   // 模组放回背包时只管背包格子）。只对玩家用：她自己作弊战斗模式的临时装备是有意留着的
   sweepTemp(target) {
@@ -277,7 +283,7 @@ export class Duels {
   async finishInterrupted(p) {
     const agent = this.agent;
     const bot = agent.bot;
-    if (p.locked) agent.adminCommand(`njfu duel off ${p.player} ${p.bot ?? bot.username}`);
+    if (p.locked) this.lockDuel(false, [p.player, p.bot ?? bot.username]);
     agent.adminCommand(`bossbar remove ${BAR}`);
     for (const who of p.stashed ?? []) {
       await agent.chat.capture(async () => bot.chat(`/njfu stash restore ${who}`), 1200).catch(() => {});
@@ -326,7 +332,7 @@ export class Duels {
       const locked = njfu.includes('duel');
       const stash = njfu.includes('stash');
       if (locked) {
-        agent.adminCommand(`njfu duel on ${username} ${bot.username}`);
+        this.lockDuel(true, [username, bot.username]);
         this.active.locked = true;
       }
       this.savePending();
@@ -390,7 +396,7 @@ export class Duels {
         if (a?.arena) await this.closeArena(a.arena, a.returnTo).catch((err) => log.warn(`拆决斗场出错：${err.message}`));
         else this.clearArena();
         if (bot.players?.[username]) this.sweepTemp(username);
-        if (this.active?.locked) agent.adminCommand(`njfu duel off ${username} ${bot.username}`);
+        if (this.active?.locked) this.lockDuel(false, [username, bot.username]);
         // 没装模组时她可能真的被打倒：算对方赢
         if (this.active?.died && !this.active.recorded) {
           const s = this.record(username, 'win');
@@ -556,7 +562,7 @@ export class Duels {
         // 模组的锁血 10 分钟后自动失效（程序断了也不会一直死不了）：打得久就定时续上
         if (locked && Date.now() - lastLock > 180_000) {
           lastLock = Date.now();
-          agent.adminCommand(`njfu duel on ${username} ${bot.username}`);
+          this.lockDuel(true, [username, bot.username]);
         }
         // 饿了（≤14）又离对手够远（≥7 格）：抓空当吃一口
         if (bot.food <= 14 && Date.now() - lastEat > 5000 && e.position.distanceTo(bot.entity.position) >= 7) {
@@ -596,7 +602,8 @@ export class Duels {
     }
     if (cfg.heal_after) {
       for (const target of [player, bot.username]) {
-        agent.adminCommand(`effect give ${target} minecraft:instant_health 1 2`);
+        // 瞬间治疗 Ⅳ 回 32 点：从 1 滴血也能真回满（Ⅲ 只回 16 点）
+        agent.adminCommand(`effect give ${target} minecraft:instant_health 1 3`);
         await sleep(300);
       }
       say('双方都回满血啦，下次再来～');
