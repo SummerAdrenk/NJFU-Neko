@@ -2,7 +2,7 @@
 import { getLog } from '../log.js';
 import { fmtPos } from '../util.js';
 import { fleeFrom, nearestCreeper, nearestThreat } from './helpers.js';
-import { canEngage, creeperPlan, fight } from './combat.js';
+import { canEngage, creeperPlan, fight, outnumbered, retreatFromCrowd } from './combat.js';
 
 const log = getLog('生存');
 
@@ -100,6 +100,14 @@ export function installSurvival(agent, bot) {
     if (source?.type === 'player') return; // 被玩家打由好感度系统处理，不还手
     const attacker = source && source !== bot.entity ? source : nearestThreat(agent, bot.entity.position, 6, canEngage);
     if (!attacker?.position) return;
+    // 被怪群围住：不一只只迎战，先撤（往主人那边或者背对怪群跑）
+    if (outnumbered(agent) && bot.health < 18) {
+      runSelf('flee', '被怪群围住，先撤', async (task) => {
+        await retreatFromCrowd(agent, task.signal);
+        return '撤出来了';
+      });
+      return;
+    }
     if (canEngage(agent, attacker)) {
       runSelf('defend', `自卫：${attacker.name}`, async (task) => {
         const won = await fight(agent, attacker, task.signal, 30_000);

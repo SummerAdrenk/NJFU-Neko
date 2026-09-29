@@ -4,7 +4,7 @@ import { goals, makeMovements } from './createBot.js';
 import {
   countItem, findPlayer, fleeFrom, nearestCreeper, nearestThreat, summarizeItems,
 } from './helpers.js';
-import { canEngage, creeperPlan, fight } from './combat.js';
+import { canEngage, creeperPlan, fight, outnumbered, retreatFromCrowd } from './combat.js';
 import { pickFood } from './survival.js';
 import { freeSeat, isPortalNear, mountEntity, usePortal } from './movement.js';
 import { getLog } from '../log.js';
@@ -61,6 +61,15 @@ export async function accompanyLoop(agent, username, task, { minDist = 2, maxDis
     if (creeper && (plan === 'flee' || !canEngage(agent, creeper))) {
       await fleeFrom(agent, creeper, task.signal);
       following = null;
+      continue;
+    }
+    // 怪太多（尸潮之类）而且已经受伤：先撤，不硬拼
+    if (outnumbered(agent) && bot.health < 16) {
+      following = null;
+      await retreatFromCrowd(agent, task.signal).catch((err) => {
+        if (task.signal.aborted) throw err;
+      });
+      await sleep(200, task.signal);
       continue;
     }
     const assist = agent.assistTarget;

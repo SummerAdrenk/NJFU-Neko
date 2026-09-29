@@ -247,6 +247,43 @@ export function canEngage(agent, e) {
 
 export const nearestEngageable = (agent, center, radius) => nearestThreat(agent, center, radius, canEngage);
 
+// 身边能近战的敌人（活着、没被保护的）
+export function meleeHostiles(agent, radius, exclude = null) {
+  const bot = agent.bot;
+  const me = bot.entity.position;
+  return Object.values(bot.entities).filter((e) => e !== bot.entity && e !== exclude && canMelee(e) && isAliveEntity(bot, e)
+    && !protectedReason(agent, e) && e.position.distanceTo(me) < radius);
+}
+
+// 被怪群围住：8 格内 3 只以上近战怪
+export const outnumbered = (agent, radius = 8) => meleeHostiles(agent, radius).length >= 3;
+
+// 从怪群里撤出来：主人离怪群比我远就往主人那边跑，否则背对怪群跑开（僵尸追不上疾跑）。
+export async function retreatFromCrowd(agent, signal, ms = 9000) {
+  const bot = agent.bot;
+  const crowd = meleeHostiles(agent, 14);
+  if (!crowd.length) return;
+  const center = crowd.reduce((acc, e) => acc.plus(e.position), new Vec3(0, 0, 0)).scaled(1 / crowd.length);
+  const me = bot.entity.position;
+  const owner = Object.values(bot.players).find((p) => p.username !== bot.username && p.entity && agent.chat.isOwner(p.username)
+    && p.entity.position.distanceTo(me) < 64)?.entity;
+  let goal;
+  if (owner && owner.position.distanceTo(center) > me.distanceTo(center) + 3) goal = new goals.GoalFollow(owner, 2);
+  else {
+    const away = new Vec3(me.x - center.x, 0, me.z - center.z);
+    const n = Math.hypot(away.x, away.z) || 1;
+    goal = new goals.GoalXZ(me.x + (away.x / n) * 18, me.z + (away.z / n) * 18);
+  }
+  bot.pathfinder.setMovements(makeMovements(bot));
+  bot.pathfinder.setGoal(goal, true);
+  const until = Date.now() + ms;
+  try {
+    while (Date.now() < until && meleeHostiles(agent, 6).length > 0) await sleep(200, signal);
+  } finally {
+    bot.pathfinder.setGoal(null);
+  }
+}
+
 // 各种怪的近战参数：spacing 保持的距离；boat 优先放船困住；boatWhenWeak 打不过时才放船；
 // ranged 远程怪（冲过去，边走边左右晃）；axe 拿斧子的（会打掉盾牌，不靠盾牌硬扛）；water 打不过时躲进水里。
 const TACTICS = {
@@ -521,8 +558,10 @@ export class Fighter {
     const t0 = Date.now();
     let falling = false;
     try {
+      const retreatAt = Number(this.agent.cfg.behavior.retreat_health ?? 8);
       while (Date.now() - t0 < 800) {
         await this.wait(25);
+        if (bot.health <= retreatAt) return false;
         if (Date.now() - t0 > 120) bot.setControlState('jump', false);
         if (!bot.entity.onGround && bot.entity.velocity.y < -0.04) {
           falling = true;
@@ -625,12 +664,24 @@ export class Fighter {
       if (this.cfg.golden_apples !== false && await this.consume(this.boss ? /^(enchanted_)?golden_apple$/ : /^golden_apple$/)) return;
       if (this.meleeCrowd(4) >= 2 && await this.pillar()) return;
     }
+    const crowd = meleeHostiles(this.agent, 5, target).length + 1;
+    if (!this.perched && !this.boss && crowd >= 3 && bot.health <= 14) {
+      // 被围住又开始掉血：先垫方块躲上去，垫不了就撤
+      if (await this.pillar()) return;
+      this.lower();
+      this.stopMove();
+      this.manual();
+      await retreatFromCrowd(this.agent, this.signal);
+      this.agent.events.push('bot', { what: 'retreat', health: Math.round(bot.health), detail: `被 ${crowd} 只怪围住，先撤` });
+      throw new LowHealthError();
+    }
     const limit = this.boss ? Math.min(retreatAt, 5) : retreatAt;
     if (limit > 0 && bot.health <= limit && !this.perched) {
       this.lower();
       this.stopMove();
       this.manual();
-      await fleeFrom(this.agent, target, this.signal, { distance: 14, timeoutMs: 8000 });
+      if (meleeHostiles(this.agent, 10).length > 1) await retreatFromCrowd(this.agent, this.signal);
+      else await fleeFrom(this.agent, target, this.signal, { distance: 14, timeoutMs: 8000 });
       this.agent.events.push('bot', { what: 'retreat', health: Math.round(bot.health), detail: `从 ${target.name ?? target.username} 身边撤退` });
       throw new LowHealthError();
     }
