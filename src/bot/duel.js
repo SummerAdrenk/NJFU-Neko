@@ -139,6 +139,13 @@ export class Duels {
         }
         return await this.fightLoop(task, username, level, cfg);
       } finally {
+        // 断线了（收尾命令发不出去）：待办留在磁盘上，下次上线时由 recover() 补做
+        const online = agent.online && agent.bot === bot;
+        if (!online) {
+          this.last = { player: username, endedAt: Date.now() };
+          this.active = null;
+          return; // eslint-disable-line no-unsafe-finally
+        }
         if (worn.them) await this.takeOffKit(username, worn.them).catch(() => {});
         if (worn.me) await this.takeOffKit(bot.username, worn.me).catch(() => {});
         this.clearArena();

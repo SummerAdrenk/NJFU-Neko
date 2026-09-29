@@ -28,7 +28,10 @@ export function createBot(cfg, target) {
   bot.loadPlugin(pvpPkg.plugin);
   if (cfg.behavior.auto_armor) bot.loadPlugin(armorManager);
   bot.nekoScaffold = cfg.behavior.scaffold !== false;
-  bot.elytraFly = () => startGliding(bot);
+  // mineflayer 的物理模块在连上服务器后才装载，会把 elytraFly 换回它那个发错动作名的版本：每次进入世界再换一次
+  bot.on('spawn', () => {
+    bot.elytraFly = () => startGliding(bot);
+  });
   return bot;
 }
 
@@ -42,7 +45,7 @@ export function fallFlyingAction(registry) {
   return Object.values(mappings).find((v) => /fall_flying|elytra/.test(v)) ?? null;
 }
 
-async function startGliding(bot) {
+export async function startGliding(bot) {
   if (bot.entity.elytraFlying) throw new Error('已经在飞了');
   if (bot.entity.onGround) throw new Error('在地上飞不起来，要先跳起来');
   if (bot.entity.isInWater) throw new Error('在水里飞不起来');

@@ -1,6 +1,6 @@
 // 移动与生存技能：垫方块（往上搭柱子）、落地水 / 落地船 / 鞘翅滑翔（防摔）、鞘翅长途飞行、
 // 穿越传送门、坐船 / 矿车 / 骑马、驯服动物。药水见 potions.js。
-import { goals, makeMovements } from './createBot.js';
+import { goals, makeMovements, startGliding } from './createBot.js';
 import { countItem, findNearestBlock, findPlayer, gotoGoal, gotoNear, Vec3 } from './helpers.js';
 import { getLog } from '../log.js';
 import { abortError, sleep } from '../util.js';
@@ -131,7 +131,7 @@ export function installFallSafety(agent, bot) {
       return;
     }
     if (elytraOn && left > 5) {
-      await bot.elytraFly().catch(() => {});
+      await startGliding(bot).catch(() => {});
       await bot.look(bot.entity.yaw, -0.15, true); // 稍微抬头滑翔
       agent.events.push('bot', { what: 'clutch', detail: '鞘翅滑翔防摔' });
       const t0 = Date.now();
@@ -325,7 +325,7 @@ export async function elytraTravel(agent, target, signal) {
     await sleep(120, signal);
     bot.setControlState('jump', false);
     await sleep(250, signal);
-    await bot.elytraFly();
+    await startGliding(bot);
     await bot.look(yawTo(), 0.6, true);
     await boost();
     const cruise = Math.max(bot.entity.position.y + 25, 100);

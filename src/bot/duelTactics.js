@@ -2,6 +2,7 @@
 //   剑斧切换、蜘蛛网、射箭、砸伤害药水、末影珍珠（追人、瞬移攻击、绕后、逃跑）、鞘翅（俯冲攻击、飞走回血）、
 //   水桶灭火、换不死图腾、泼治疗药水、吃附魔金苹果、爆炸攻击（末影水晶、TNT）。
 // 每一招都有冷却和失败保护：做不成就返回 false，交给普通近战。爆炸只在面板模组锁血、保护场地时用。
+import { startGliding } from './createBot.js';
 import { elytraTravel } from './movement.js';
 import { throwPotionAt, usePotion } from './potions.js';
 import { SNOWBALL, solveBallistic } from './ballistics.js';
@@ -299,7 +300,7 @@ export class DuelTactics {
       await this.f.wait(120);
       bot.setControlState('jump', false);
       await this.f.wait(200);
-      await bot.elytraFly();
+      await startGliding(bot);
       await bot.look(yawTo(bot.entity.position, target.position), 1.0, true);
       await holdItem(bot, rocket);
       bot.activateItem();
