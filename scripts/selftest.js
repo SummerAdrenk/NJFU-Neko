@@ -295,6 +295,18 @@ check('观战：对手自己不能观战；别人切成旁观者、传送到场�
   specErr && specOk === null && specCmdsIn.includes('gamemode spectator Alex') && specCmdsIn.some((c) => c.startsWith('execute in minecraft:overworld run tp Alex 100.5 218 79.5'))
   && backErr === null && specCmds.includes('execute in minecraft:overworld run tp Alex 1 64 2') && specCmds.includes('gamemode survival Alex'));
 
+const setupMod = await import('../scripts/setup.js');
+const { parse: parseToml } = await import('smol-toml');
+const template = fs.readFileSync(new URL('../config.example.toml', import.meta.url), 'utf8');
+const wizardCfg = parseToml(setupMod.applyAnswers(template, {
+  host: '127.0.0.1', port: 59010, owners: ['Summer_Adrenk', '小明'], mode: 'openai', provider: 'custom', key: 'sk-test"quote', baseUrl: 'http://127.0.0.1:11434/v1', model: 'qwen',
+}));
+check('第一次运行的问答：只改对应段里的那一行（战斗、ViaProxy 里同名的 mode 不动），生成的配置能正常读',
+  wizardCfg.server.port === 59010 && wizardCfg.chat.owners.join() === 'Summer_Adrenk,小明' && wizardCfg.brain.mode === 'openai'
+  && wizardCfg.brain.openai.provider === 'custom' && wizardCfg.brain.openai.api_key === 'sk-test"quote' && wizardCfg.brain.openai.base_url === 'http://127.0.0.1:11434/v1'
+  && wizardCfg.combat.mode === parseToml(template).combat.mode && wizardCfg.viaproxy.mode === 'auto');
+check('找 Java 时读配置里写的路径', setupMod.getTomlValue(setupMod.setTomlValue(template, 'viaproxy', 'java', 'D:/Code/Java/bin/java.exe'), 'viaproxy', 'java') === 'D:/Code/Java/bin/java.exe');
+
 const junk = await import('../src/bot/junk.js');
 const junkBot = {
   inventory: {
